@@ -126,7 +126,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     1,
     'Valid Palindrome',
     'Given a string s, return true if it is a palindrome, false otherwise. A palindrome reads the same forward and backward.',
-    'Beginner',
+    'beginner',
     'python',
     'def isPalindrome(s: str) -> bool:
     left, right = 0, len(s) - 1
@@ -156,7 +156,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     1,
     'Two Sum Sorted',
     'Given a sorted array of integers and a target, find two numbers that add up to the target. Return their indices.',
-    'Beginner',
+    'beginner',
     'python',
     'def twoSum(nums: list[int], target: int) -> list[int]:
     left, right = 0, len(nums) - 1
@@ -195,7 +195,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     2,
     'Maximum Sum Subarray',
     'Find the maximum sum of any contiguous subarray of size k.',
-    'Beginner',
+    'beginner',
     'python',
     'def maxSumSubarray(nums: list[int], k: int) -> int:
     window_sum = sum(nums[:k])
@@ -226,7 +226,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     3,
     'Detect Cycle in Linked List',
     'Given head of a linked list, determine if it has a cycle.',
-    'Medium',
+    'medium',
     'python',
     'def hasCycle(head) -> bool:
     if not head:
@@ -265,7 +265,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     4,
     'Search in Rotated Sorted Array',
     'Search for a target value in a rotated sorted array. Return its index or -1 if not found.',
-    'Medium',
+    'medium',
     'python',
     'def search(nums: list[int], target: int) -> int:
     left, right = 0, len(nums) - 1
@@ -316,7 +316,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     5,
     'Maximum Depth of Binary Tree',
     'Find the maximum depth (height) of a binary tree.',
-    'Beginner',
+    'beginner',
     'python',
     'def maxDepth(root) -> int:
     if not root:
@@ -345,7 +345,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     6,
     'Binary Tree Level Order Traversal',
     'Return the level order traversal of a binary tree (values of nodes level by level).',
-    'Medium',
+    'medium',
     'python',
     'from collections import deque
 
@@ -398,7 +398,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     7,
     'Climbing Stairs',
     'You are climbing a staircase with n steps. You can climb 1 or 2 steps at a time. How many distinct ways can you climb to the top?',
-    'Beginner',
+    'beginner',
     'python',
     'def climbStairs(n: int) -> int:
     if n <= 2:
@@ -433,7 +433,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     8,
     'Generate Parentheses',
     'Generate all combinations of well-formed parentheses for n pairs.',
-    'Medium',
+    'medium',
     'python',
     'def generateParenthesis(n: int) -> list[str]:
     result = []
