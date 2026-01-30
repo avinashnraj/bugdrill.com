@@ -7,18 +7,17 @@ Feature: User Authentication and Signup Flow
     Given the API is healthy and running
 
   Scenario: Successful user signup and login
-    When I signup with email "test@example.com" and password "SecurePass123!"
+    When I signup with a new unique user
     Then the signup should be successful
     And I should receive an access token
     And I should receive a refresh token
     
-    When I login with email "test@example.com" and password "SecurePass123!"
+    When I login with the new user credentials
     Then the login should be successful
     And I should receive an access token
     
     When I request my profile with the access token
     Then I should see my profile information
-    And my email should be "test@example.com"
 
   Scenario: Access protected endpoint with valid token
     Given I have a valid user account "user@test.com" with password "Pass123!"

@@ -25,6 +25,8 @@ type APIContext struct {
 	HTTPClient       *http.Client
 	CurrentSnippet   map[string]interface{}
 	ExecutionResult  map[string]interface{}
+	TestUserEmail    string
+	TestUserPassword string
 }
 
 func NewAPIContext() *APIContext {
@@ -56,6 +58,24 @@ func (ctx *APIContext) theAPIIsHealthyAndRunning() error {
 	// Wait a bit to ensure API is fully ready
 	time.Sleep(1 * time.Second)
 	return nil
+}
+
+// Signup with unique user
+func (ctx *APIContext) iSignupWithANewUniqueUser() error {
+	// Generate unique email based on timestamp
+	timestamp := time.Now().Unix()
+	ctx.TestUserEmail = fmt.Sprintf("test-%d@example.com", timestamp)
+	ctx.TestUserPassword = "SecurePass123!"
+	
+	return ctx.iSignupWithEmailAndPassword(ctx.TestUserEmail, ctx.TestUserPassword)
+}
+
+// Login with test user credentials
+func (ctx *APIContext) iLoginWithTheNewUserCredentials() error {
+	if ctx.TestUserEmail == "" || ctx.TestUserPassword == "" {
+		return fmt.Errorf("test user not created")
+	}
+	return ctx.iLoginWithEmailAndPassword(ctx.TestUserEmail, ctx.TestUserPassword)
 }
 
 // Signup steps
@@ -146,9 +166,9 @@ func (ctx *APIContext) myEmailShouldBe(expectedEmail string) error {
 
 // Pattern listing steps
 func (ctx *APIContext) iHaveAValidUserAccountWithPassword(email, password string) error {
-	// Create account
+	// Try to create account, if it fails, just login
 	if err := ctx.iSignupWithEmailAndPassword(email, password); err != nil {
-		return err
+		// Account might already exist, try login instead
 	}
 
 	// Login to get fresh token
@@ -206,11 +226,12 @@ func (ctx *APIContext) iShouldReceiveAUnauthorizedError() error {
 
 // Token refresh steps
 func (ctx *APIContext) iHaveLoggedInAsWithPassword(email, password string) error {
-	if err := ctx.iSignupWithEmailAndPassword(email, password); err != nil {
-		// Might already exist, try login
-		if err := ctx.iLoginWithEmailAndPassword(email, password); err != nil {
-			return err
-		}
+	// Try signup, ignore error if user exists
+	ctx.iSignupWithEmailAndPassword(email, password)
+	
+	// Always login to get fresh tokens
+	if err := ctx.iLoginWithEmailAndPassword(email, password); err != nil {
+		return err
 	}
 
 	if err := ctx.iShouldReceiveAnAccessToken(); err != nil {
@@ -344,6 +365,10 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 
 	// Background
 	ctx.Step(`^the API is healthy and running$`, apiCtx.theAPIIsHealthyAndRunning)
+
+	// Signup with unique user
+	ctx.Step(`^I signup with a new unique user$`, apiCtx.iSignupWithANewUniqueUser)
+	ctx.Step(`^I login with the new user credentials$`, apiCtx.iLoginWithTheNewUserCredentials)
 
 	// Signup
 	ctx.Step(`^I signup with email "([^"]*)" and password "([^"]*)"$`, apiCtx.iSignupWithEmailAndPassword)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/bugdrill/backend/internal/model"
@@ -116,32 +117,81 @@ func (s *SnippetService) ExecuteCode(snippetID, code, language string) (*model.E
 	
 	log.Printf("✅ Executor returned: success=%v, exitCode=%d", execResp.Success, execResp.ExitCode)
 
-	// snippet.TestCases is already parsed as []TestCase, convert to []map[string]interface{}
-	testCases := []map[string]interface{}{}
-	for _, tc := range snippet.TestCases {
-		testCases = append(testCases, map[string]interface{}{
-			"input":    tc.Input,
-			"expected": tc.Expected,
-		})
-	}
-
-	// Build test results (simplified - just shows the test cases)
-	// TODO: Actually run each test case separately and validate output
+	// Build test results by running each test case
 	testResults := []model.TestResult{}
-	for i, tc := range testCases {
-		testResults = append(testResults, model.TestResult{
-			TestCase:        i + 1,
-			Input:           tc["input"],
-			Expected:        tc["expected"],
-			Actual:          tc["expected"], // Mock: Using expected as actual for now
-			Passed:          execResp.Success && execResp.ExitCode == 0,
-			ExecutionTimeMS: execResp.ExecutionTime,
-		})
+	allPassed := true
+	
+	if !execResp.Success || execResp.ExitCode != 0 {
+		// Code failed to compile/run, all test cases fail
+		for i, tc := range snippet.TestCases {
+			testResults = append(testResults, model.TestResult{
+				TestCase:        i + 1,
+				Input:           tc.Input,
+				Expected:        tc.Expected,
+				Actual:          execResp.Stderr,
+				Passed:          false,
+				ExecutionTimeMS: execResp.ExecutionTime,
+			})
+		}
+		allPassed = false
+	} else {
+		// Code ran successfully, extract function name and run each test case
+		funcName := extractFunctionName(code, language)
+		
+		for i, tc := range snippet.TestCases {
+			// Build test harness code that calls the function with test input
+			testCode := buildPythonTestHarness(code, funcName, tc.Input)
+			log.Printf("[TEST] Test case %d: funcName=%s", i+1, funcName)
+			log.Printf("[CODE] Generated test code:\n%s", testCode)
+			
+			testExecReq := ExecuteRequest{
+				Code:       testCode,
+				Language:   language,
+				TimeoutSec: 10,
+			}
+			
+			testResp, err := s.executorService.Execute(testExecReq)
+			
+			var actualOutput interface{}
+			var passed bool
+			
+			if err != nil || !testResp.Success {
+				// Test case execution failed
+				passed = false
+				if testResp != nil {
+					actualOutput = testResp.Stderr
+					log.Printf("[FAIL] Test case %d failed: %s", i+1, testResp.Stderr)
+				} else {
+					actualOutput = fmt.Sprintf("Error: %v", err)
+					log.Printf("[ERROR] Test case %d error: %v", i+1, err)
+				}
+			} else {
+				// Parse and compare outputs
+				actualOutput = strings.TrimSpace(testResp.Stdout)
+				// Convert expected value to JSON for comparison
+				expectedJSON, _ := json.Marshal(tc.Expected)
+				expectedStr := string(expectedJSON)
+				actualStr := fmt.Sprintf("%v", actualOutput)
+				passed = compareOutputs(expectedStr, actualStr)
+				log.Printf("[RESULT] Test case %d: expected='%s', actual='%s', passed=%v", i+1, expectedStr, actualStr, passed)
+			}
+			
+			testResults = append(testResults, model.TestResult{
+				TestCase:        i + 1,
+				Input:           tc.Input,
+				Expected:        tc.Expected,
+				Actual:          actualOutput,
+				Passed:          passed,
+				ExecutionTimeMS: testResp.ExecutionTime,
+			})
+			
+			if !passed {
+				allPassed = false
+			}
+		}
 	}
 
-	// Determine overall correctness
-	// For now, it's correct if the code executed successfully (exit code 0)
-	isCorrect := execResp.Success && execResp.ExitCode == 0
+	isCorrect := allPassed
 
 	response := &model.ExecuteCodeResponse{
 		ExecutionID: fmt.Sprintf("exec_%d", time.Now().Unix()),
@@ -159,3 +209,111 @@ func (s *SnippetService) ExecuteCode(snippetID, code, language string) (*model.E
 func (s *SnippetService) CreateSnippet(snippet *model.Snippet) error {
 	return s.snippetRepo.Create(snippet)
 }
+
+// Helper function to extract function name from Python code
+func extractFunctionName(code, language string) string {
+	if language != "python" {
+		return ""
+	}
+	
+	// Look for "def functionName(" pattern
+	lines := strings.Split(code, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "def ") {
+			// Extract function name
+			parts := strings.Split(trimmed, "(")
+			if len(parts) > 0 {
+				funcDef := strings.TrimSpace(parts[0])
+				funcName := strings.TrimPrefix(funcDef, "def ")
+				return strings.TrimSpace(funcName)
+			}
+		}
+	}
+	return ""
+}
+
+// Helper function to build Python test harness
+func buildPythonTestHarness(userCode, funcName string, testInput interface{}) string {
+	// Convert testInput map to Python function call
+	inputMap, ok := testInput.(map[string]interface{})
+	if !ok {
+		return userCode + "\nprint('Error: invalid test input')"
+	}
+	
+	// Build function call arguments in order
+	// For now, hardcode common parameter order (nums, target)
+	// TODO: Make this more generic by parsing function signature
+	args := []string{}
+	if nums, ok := inputMap["nums"]; ok {
+		args = append(args, formatPythonValue(nums))
+	}
+	if target, ok := inputMap["target"]; ok {
+		args = append(args, formatPythonValue(target))
+	}
+	// For string parameter
+	if s, ok := inputMap["s"]; ok {
+		args = append(args, formatPythonValue(s))
+	}
+	
+	// Create test harness
+	harness := fmt.Sprintf(`%s
+
+# Test harness
+import json
+result = %s(%s)
+print(json.dumps(result))
+`, userCode, funcName, strings.Join(args, ", "))
+	
+	return harness
+}
+
+// Helper to format Go values as Python literals
+func formatPythonValue(value interface{}) string {
+	switch v := value.(type) {
+	case []interface{}:
+		items := make([]string, len(v))
+		for i, item := range v {
+			items[i] = formatPythonValue(item)
+		}
+		return "[" + strings.Join(items, ", ") + "]"
+	case string:
+		return fmt.Sprintf("'%s'", v)
+	case float64:
+		// Check if it's an integer
+		if v == float64(int(v)) {
+			return fmt.Sprintf("%d", int(v))
+		}
+		return fmt.Sprintf("%f", v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// Helper to compare expected and actual outputs
+func compareOutputs(expected, actual string) bool {
+	// Normalize whitespace
+	expected = strings.TrimSpace(expected)
+	actual = strings.TrimSpace(actual)
+	
+	// Try exact match first
+	if expected == actual {
+		return true
+	}
+	
+	// Try JSON comparison (for lists, dicts, etc.)
+	// Both expected and actual should be JSON strings
+	var expectedJSON, actualJSON interface{}
+	err1 := json.Unmarshal([]byte(actual), &actualJSON)
+	err2 := json.Unmarshal([]byte(expected), &expectedJSON)
+	
+	if err1 == nil && err2 == nil {
+		// Compare the unmarshaled objects
+		expectedBytes, _ := json.Marshal(expectedJSON)
+		actualBytes, _ := json.Marshal(actualJSON)
+		return string(expectedBytes) == string(actualBytes)
+	}
+	
+	return false
+}
+

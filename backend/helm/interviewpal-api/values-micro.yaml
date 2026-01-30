@@ -1,0 +1,209 @@
+# Helm values optimized for single t4g.micro instance (1GB RAM)
+# This configuration runs everything in ~700MB RAM
+
+replicaCount: 1  # Single replica for cost savings
+
+image:
+  repository: YOUR_DOCKERHUB_USERNAME/bugdrill-api
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+
+podSecurityContext:
+  fsGroup: 2000
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false  # Allow temporary files
+  runAsNonRoot: true
+  runAsUser: 1000
+
+service:
+  type: NodePort
+  port: 8080
+  targetPort: 8080
+  nodePort: 80  # Expose directly on port 80 (no LoadBalancer cost)
+
+ingress:
+  enabled: false  # No ingress controller needed on single node
+
+# Minimal resource allocation for 1GB instance
+resources:
+  limits:
+    cpu: 400m      # Leave 100m for system
+    memory: 256Mi  # ~25% of total RAM
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: false  # Not needed on single node
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Application configuration
+config:
+  env: production
+  server:
+    port: "8080"
+    readTimeout: "10s"
+    writeTimeout: "10s"
+    idleTimeout: "60s"
+  
+  database:
+    host: postgres-service
+    port: "5432"
+    name: bugdrill
+    sslMode: disable  # Local cluster, no SSL needed
+  
+  redis:
+    host: redis-service
+    port: "6379"
+  
+  jwt:
+    accessExpiration: "15m"
+    refreshExpiration: "168h"
+  
+  executor:
+    url: http://executor-service:8081
+
+# PostgreSQL configuration (in same cluster)
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "15-alpine"
+  
+  auth:
+    username: postgres
+    database: bugdrill
+    # Set password in secrets
+  
+  primary:
+    persistence:
+      enabled: true
+      existingClaim: postgres-pvc  # Use our EBS-backed PVC
+      size: 15Gi
+    
+    resources:
+      limits:
+        cpu: 200m
+        memory: 150Mi
+      requests:
+        cpu: 50m
+        memory: 100Mi
+    
+    # Optimize PostgreSQL for low memory
+    extraEnvVars:
+      - name: POSTGRES_INITDB_ARGS
+        value: "--encoding=UTF8 --locale=C"
+      - name: POSTGRES_HOST_AUTH_METHOD
+        value: "md5"
+    
+    # PostgreSQL configuration for 150MB RAM
+    postgresqlConfiguration:
+      shared_buffers: "32MB"
+      effective_cache_size: "64MB"
+      maintenance_work_mem: "16MB"
+      checkpoint_completion_target: "0.9"
+      wal_buffers: "2MB"
+      default_statistics_target: "100"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      work_mem: "2MB"
+      min_wal_size: "512MB"
+      max_wal_size: "1GB"
+
+# Redis configuration
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+  
+  master:
+    persistence:
+      enabled: false  # Use as cache only
+    
+    resources:
+      limits:
+        cpu: 100m
+        memory: 64Mi
+      requests:
+        cpu: 25m
+        memory: 32Mi
+  
+  replica:
+    replicaCount: 0  # No replicas on single node
+
+# Executor service
+executor:
+  enabled: true
+  image:
+    repository: YOUR_DOCKERHUB_USERNAME/bugdrill-executor
+    tag: "latest"
+  
+  replicaCount: 1
+  
+  service:
+    type: ClusterIP
+    port: 8081
+  
+  resources:
+    limits:
+      cpu: 200m
+      memory: 150Mi
+    requests:
+      cpu: 50m
+      memory: 100Mi
+  
+  # Security for code execution
+  securityContext:
+    privileged: false
+    runAsNonRoot: true
+    runAsUser: 1000
+
+# Health checks
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Resource summary for this configuration:
+# - API: 256Mi
+# - PostgreSQL: 150Mi
+# - Redis: 64Mi
+# - Executor: 150Mi
+# - K3s overhead: ~100Mi
+# Total: ~720Mi (fits in 1GB with swap)
