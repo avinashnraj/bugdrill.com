@@ -24,6 +24,13 @@ bugdrill/
 │   ├── migrations/      # Database schemas
 │   ├── helm/            # Kubernetes deployment
 │   └── tests/           # Integration tests
+├── mobile/              # React Native mobile app
+│   ├── src/
+│   │   ├── services/   # API integration
+│   │   ├── stores/     # State management
+│   │   ├── screens/    # App screens
+│   │   └── types/      # TypeScript types
+│   └── App.tsx         # Main app
 └── SYSTEM_DESIGN.md     # Detailed architecture docs
 ```
 
@@ -35,6 +42,13 @@ bugdrill/
 - Redis 7 (caching & sessions)
 - JWT authentication
 
+**Mobile:**
+- React Native with Expo
+- TypeScript
+- Zustand (state management)
+- React Navigation
+- Axios (API client)
+
 **Infrastructure:**
 - Docker & Docker Compose
 - Kubernetes (Helm charts)
@@ -42,12 +56,7 @@ bugdrill/
 
 ## 🚀 Quick Start
 
-### Prerequisites
-- Go 1.21+
-- Docker & Docker Compose
-- Make
-
-### Running Locally
+### Backend
 
 ```bash
 cd backend
@@ -60,6 +69,23 @@ make run
 
 # API available at http://localhost:8080
 ```
+
+### Mobile App
+
+```bash
+cd mobile
+
+# Install dependencies
+npm install
+
+# Start Expo
+npm start
+
+# Press 'i' for iOS simulator or 'a' for Android emulator
+# Or scan QR code with Expo Go app on your phone
+```
+
+See [mobile/SETUP.md](mobile/SETUP.md) for detailed mobile setup instructions.
 
 ### Running Tests
 
@@ -78,6 +104,8 @@ make test-k3d
 
 - [System Design](SYSTEM_DESIGN.md) - Comprehensive architecture documentation
 - [Backend README](backend/README.md) - API development guide
+- [Mobile Setup](mobile/SETUP.md) - Complete mobile app setup guide
+- [Mobile README](mobile/README.md) - Mobile development reference
 - [K3d Testing](backend/K3D_TESTING.md) - Kubernetes testing setup
 - [API Collection](backend/InterviewPal_API.postman_collection.json) - Postman collection
 

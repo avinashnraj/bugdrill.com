@@ -30,7 +30,7 @@ type Snippet struct {
 	Hint1          string    `json:"hint_1" db:"hint_1"`
 	Hint2          string    `json:"hint_2" db:"hint_2"`
 	Hint3          string    `json:"hint_3" db:"hint_3"`
-	CreatedBy      string    `json:"created_by" db:"created_by"`
+	CreatedBy      *string   `json:"created_by,omitempty" db:"created_by"`
 	Status         string    `json:"status" db:"status"`
 	CreatedAt      time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`

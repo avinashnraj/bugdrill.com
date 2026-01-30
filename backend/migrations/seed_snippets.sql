@@ -1,124 +1,5 @@
--- Create UUID extension
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- Users table
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255),
-    display_name VARCHAR(100),
-    oauth_provider VARCHAR(20),
-    oauth_id VARCHAR(255),
-    role VARCHAR(20) DEFAULT 'user',
-    created_at TIMESTAMP DEFAULT NOW(),
-    last_login_at TIMESTAMP,
-    is_trial BOOLEAN DEFAULT FALSE,
-    trial_snippets_remaining INT DEFAULT 5,
-    CONSTRAINT check_role CHECK (role IN ('user', 'admin'))
-);
-
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_oauth ON users(oauth_provider, oauth_id);
-
--- Pattern categories
-CREATE TABLE IF NOT EXISTS pattern_categories (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    slug VARCHAR(100) UNIQUE NOT NULL,
-    description TEXT,
-    icon_url VARCHAR(255),
-    order_index INT DEFAULT 0
-);
-
--- Snippets table
-CREATE TABLE IF NOT EXISTS snippets (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    pattern_id INT REFERENCES pattern_categories(id) ON DELETE CASCADE,
-    title VARCHAR(200) NOT NULL,
-    description TEXT,
-    difficulty VARCHAR(20) NOT NULL,
-    language VARCHAR(20) NOT NULL,
-    
-    correct_code TEXT NOT NULL,
-    buggy_code TEXT NOT NULL,
-    bug_type VARCHAR(50),
-    bug_explanation TEXT,
-    
-    test_cases JSONB NOT NULL,
-    
-    hint_1 TEXT,
-    hint_2 TEXT,
-    hint_3 TEXT,
-    
-    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
-    status VARCHAR(20) DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
-    
-    CONSTRAINT check_difficulty CHECK (difficulty IN ('beginner', 'medium', 'hard')),
-    CONSTRAINT check_status CHECK (status IN ('active', 'pending_review', 'archived'))
-);
-
-CREATE INDEX idx_snippets_pattern ON snippets(pattern_id);
-CREATE INDEX idx_snippets_difficulty ON snippets(difficulty);
-CREATE INDEX idx_snippets_status ON snippets(status);
-
--- User snippet attempts
-CREATE TABLE IF NOT EXISTS user_snippet_attempts (
-    id BIGSERIAL PRIMARY KEY,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    snippet_id UUID REFERENCES snippets(id) ON DELETE CASCADE,
-    
-    submitted_code TEXT NOT NULL,
-    is_correct BOOLEAN NOT NULL,
-    execution_time_ms INT,
-    test_cases_passed INT,
-    test_cases_total INT,
-    
-    hints_used INT DEFAULT 0,
-    attempt_number INT DEFAULT 1,
-    
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE INDEX idx_attempts_user ON user_snippet_attempts(user_id);
-CREATE INDEX idx_attempts_snippet ON user_snippet_attempts(snippet_id);
-CREATE INDEX idx_attempts_correct ON user_snippet_attempts(is_correct);
-
--- User pattern progress (aggregated stats)
-CREATE TABLE IF NOT EXISTS user_pattern_progress (
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    pattern_id INT REFERENCES pattern_categories(id) ON DELETE CASCADE,
-    
-    snippets_attempted INT DEFAULT 0,
-    snippets_solved INT DEFAULT 0,
-    total_attempts INT DEFAULT 0,
-    avg_attempts_per_solve DECIMAL(4,2),
-    
-    last_practiced_at TIMESTAMP,
-    next_review_at TIMESTAMP,
-    mastery_level INT DEFAULT 0,
-    
-    PRIMARY KEY (user_id, pattern_id)
-);
-
--- Seed some pattern categories
-INSERT INTO pattern_categories (name, slug, description, order_index) VALUES
-    ('Two Pointers', 'two-pointers', 'Master the two-pointer technique for array and string problems', 1),
-    ('Sliding Window', 'sliding-window', 'Learn to solve subarray/substring problems efficiently', 2),
-    ('Fast & Slow Pointers', 'fast-slow-pointers', 'Detect cycles and find middle elements in linked lists', 3),
-    ('Binary Search', 'binary-search', 'Efficient searching in sorted arrays and search spaces', 4),
-    ('Depth-First Search', 'dfs', 'Tree and graph traversal using DFS', 5),
-    ('Breadth-First Search', 'bfs', 'Level-order traversal and shortest path problems', 6),
-    ('Dynamic Programming', 'dynamic-programming', 'Optimize recursive solutions with memoization', 7),
-    ('Backtracking', 'backtracking', 'Explore all possible solutions systematically', 8)
-ON CONFLICT (slug) DO NOTHING;
-
--- Create an admin user (password: admin123)
--- Password hash for "admin123" using bcrypt cost 10
-INSERT INTO users (email, password_hash, display_name, role, is_trial) VALUES
-    ('admin@bugdrill.com', '$2a$10$5z8h4F3q1xY.vN6QjXXXXu7ZWJz8zQ8KqP5L3hR2qWx1y.z3xX0yK', 'Admin User', 'admin', FALSE)
-ON CONFLICT (email) DO NOTHING;
+-- Sample snippets seed data
+-- Run this directly against your database
 
 -- Sample snippets for Two Pointers pattern
 INSERT INTO snippets (pattern_id, title, description, difficulty, language, correct_code, buggy_code, bug_type, bug_explanation, test_cases, hint_1, hint_2, hint_3, status) VALUES
@@ -126,7 +7,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     1,
     'Valid Palindrome',
     'Given a string s, return true if it is a palindrome, false otherwise. A palindrome reads the same forward and backward.',
-    'Beginner',
+    'beginner',
     'python',
     'def isPalindrome(s: str) -> bool:
     left, right = 0, len(s) - 1
@@ -187,10 +68,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     'The array is sorted. Moving right pointer left gives a smaller value.',
     'The conditions for moving left and right pointers are swapped.',
     'active'
-);
-
--- Sample snippets for Sliding Window pattern
-INSERT INTO snippets (pattern_id, title, description, difficulty, language, correct_code, buggy_code, bug_type, bug_explanation, test_cases, hint_1, hint_2, hint_3, status) VALUES
+),
 (
     2,
     'Maximum Sum Subarray',
@@ -218,10 +96,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     'A sliding window of size k should remove one element and add one element',
     'You need to subtract nums[i-k] before adding nums[i]',
     'active'
-);
-
--- Sample snippets for Fast & Slow Pointers
-INSERT INTO snippets (pattern_id, title, description, difficulty, language, correct_code, buggy_code, bug_type, bug_explanation, test_cases, hint_1, hint_2, hint_3, status) VALUES
+),
 (
     3,
     'Detect Cycle in Linked List',
@@ -257,10 +132,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     'If fast starts ahead, they might never meet even with a cycle',
     'Initialize both slow and fast at head, not fast at head.next',
     'active'
-);
-
--- Sample snippets for Binary Search
-INSERT INTO snippets (pattern_id, title, description, difficulty, language, correct_code, buggy_code, bug_type, bug_explanation, test_cases, hint_1, hint_2, hint_3, status) VALUES
+),
 (
     4,
     'Search in Rotated Sorted Array',
@@ -308,10 +180,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     'The boundary check needs to include equality',
     'Change nums[left] < nums[mid] to nums[left] <= nums[mid]',
     'active'
-);
-
--- Sample snippets for DFS
-INSERT INTO snippets (pattern_id, title, description, difficulty, language, correct_code, buggy_code, bug_type, bug_explanation, test_cases, hint_1, hint_2, hint_3, status) VALUES
+),
 (
     5,
     'Maximum Depth of Binary Tree',
@@ -337,10 +206,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     'Each level adds 1 to the depth',
     'You need to add 1 to account for the current node',
     'active'
-);
-
--- Sample snippets for BFS
-INSERT INTO snippets (pattern_id, title, description, difficulty, language, correct_code, buggy_code, bug_type, bug_explanation, test_cases, hint_1, hint_2, hint_3, status) VALUES
+),
 (
     6,
     'Binary Tree Level Order Traversal',
@@ -390,10 +256,7 @@ def levelOrder(root):
     'Store the current level size before processing',
     'Use level_size = len(queue) and iterate range(level_size)',
     'active'
-);
-
--- Sample snippets for Dynamic Programming
-INSERT INTO snippets (pattern_id, title, description, difficulty, language, correct_code, buggy_code, bug_type, bug_explanation, test_cases, hint_1, hint_2, hint_3, status) VALUES
+),
 (
     7,
     'Climbing Stairs',
@@ -425,10 +288,7 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     'If you access dp[n], the array needs to have at least n+1 elements',
     'Change array size from n to n+1',
     'active'
-);
-
--- Sample snippets for Backtracking
-INSERT INTO snippets (pattern_id, title, description, difficulty, language, correct_code, buggy_code, bug_type, bug_explanation, test_cases, hint_1, hint_2, hint_3, status) VALUES
+),
 (
     8,
     'Generate Parentheses',
@@ -466,4 +326,5 @@ INSERT INTO snippets (pattern_id, title, description, difficulty, language, corr
     'You can only add ) when there are more ( than ) so far',
     'Change close_count < n to close_count < open_count',
     'active'
-);
+)
+ON CONFLICT DO NOTHING;

@@ -64,6 +64,31 @@ docker-shell: ## Open shell in development container
 docker-logs-dev: ## View development container logs
 	$(DOCKER_COMPOSE) logs -f dev
 
+api-reload: ## Rebuild and restart API service
+	@echo "Rebuilding API Docker image..."
+	$(DOCKER_COMPOSE) build api
+	@echo "Restarting API container..."
+	$(DOCKER_COMPOSE) up -d api
+	@echo "✓ API service reloaded successfully"
+
+dev-reload: ## Restart development container (triggers Air hot-reload)
+	@echo "Restarting development container..."
+	$(DOCKER_COMPOSE) restart dev
+	@echo "✓ Development service restarted (Air will hot-reload)"
+
+reload: ## Smart reload - restarts dev container if running, otherwise rebuilds api
+	@if docker ps --format '{{.Names}}' | grep -q "bugdrill-dev"; then \
+		echo "Development container detected - restarting..."; \
+		$(DOCKER_COMPOSE) restart dev; \
+		echo "✓ Development service restarted (Air will hot-reload)"; \
+	else \
+		echo "Development container not running - rebuilding API..."; \
+		$(DOCKER_COMPOSE) build api; \
+		echo "Restarting API container..."; \
+		$(DOCKER_COMPOSE) up -d api; \
+		echo "✓ API service reloaded successfully"; \
+	fi
+
 # Database
 migrate-up: ## Run database migrations
 	$(GO) run ./cmd/migrate up

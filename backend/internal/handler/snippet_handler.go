@@ -144,7 +144,8 @@ func (h *SnippetHandler) CreateSnippet(c *gin.Context) {
 	}
 
 	snippet.ID = uuid.New().String()
-	snippet.CreatedBy = c.GetString("user_id")
+	userID := c.GetString("user_id")
+	snippet.CreatedBy = &userID
 	snippet.Status = "active"
 
 	if err := h.snippetService.CreateSnippet(&snippet); err != nil {
