@@ -66,7 +66,7 @@ func healthHandler(c *gin.Context) {
 
 func handleExecute(c *gin.Context) {
 	log.Println("📥 Received execution request")
-	
+
 	var req ExecuteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Printf("❌ Failed to bind JSON: %v", err)
@@ -76,7 +76,7 @@ func handleExecute(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	log.Printf("🐍 Executing Python code (length: %d bytes)", len(req.Code))
 
 	// Set default timeout
