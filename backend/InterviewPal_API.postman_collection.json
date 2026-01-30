@@ -1,0 +1,487 @@
+{
+  "info": {
+    "name": "bugdrill API",
+    "description": "Complete API collection for bugdrill backend",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "snippet_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health & Status",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Readiness Check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ready",
+              "host": ["{{base_url}}"],
+              "path": ["ready"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Signup",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('access_token', response.access_token);",
+                  "    pm.collectionVariables.set('refresh_token', response.refresh_token);",
+                  "    pm.collectionVariables.set('user_id', response.user.id);",
+                  "    console.log('Tokens saved to collection variables');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"testuser@example.com\",\n  \"password\": \"SecurePass123!\",\n  \"display_name\": \"Test User\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/signup",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "signup"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('access_token', response.access_token);",
+                  "    pm.collectionVariables.set('refresh_token', response.refresh_token);",
+                  "    pm.collectionVariables.set('user_id', response.user.id);",
+                  "    console.log('Tokens saved to collection variables');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"testuser@example.com\",\n  \"password\": \"SecurePass123!\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "login"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get My Profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "me"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('access_token', response.access_token);",
+                  "    pm.collectionVariables.set('refresh_token', response.refresh_token);",
+                  "    console.log('Tokens refreshed');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/refresh",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "refresh"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/logout",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "logout"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Patterns",
+      "item": [
+        {
+          "name": "List All Patterns",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/patterns",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "patterns"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Snippets by Pattern",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/patterns/1/snippets?difficulty=medium",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "patterns", "1", "snippets"],
+              "query": [
+                {
+                  "key": "difficulty",
+                  "value": "medium",
+                  "description": "Filter by difficulty: beginner, medium, hard"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Snippets by Pattern (All Difficulties)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/patterns/1/snippets",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "patterns", "1", "snippets"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Snippets",
+      "item": [
+        {
+          "name": "Get Snippet Details",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('snippet_id', response.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/snippets/{{snippet_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "snippets", "{{snippet_id}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Execute Code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"def two_sum(arr, target):\\n    # Fixed version\\n    seen = {}\\n    for i, num in enumerate(arr):\\n        complement = target - num\\n        if complement in seen:\\n            return [seen[complement], i]\\n        seen[num] = i\\n    return []\",\n  \"language\": \"python\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/snippets/{{snippet_id}}/execute",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "snippets", "{{snippet_id}}", "execute"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Submit Solution",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"def two_sum(arr, target):\\n    seen = {}\\n    for i, num in enumerate(arr):\\n        complement = target - num\\n        if complement in seen:\\n            return [seen[complement], i]\\n        seen[num] = i\\n    return []\",\n  \"language\": \"python\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/snippets/{{snippet_id}}/submit",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "snippets", "{{snippet_id}}", "submit"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Hint - Tier 1",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/snippets/{{snippet_id}}/hints/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "snippets", "{{snippet_id}}", "hints", "1"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Hint - Tier 2",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/snippets/{{snippet_id}}/hints/2",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "snippets", "{{snippet_id}}", "hints", "2"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Hint - Tier 3",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/snippets/{{snippet_id}}/hints/3",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "snippets", "{{snippet_id}}", "hints", "3"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Progress",
+      "item": [
+        {
+          "name": "Get User Progress",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/progress",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users", "progress"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Create Snippet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('snippet_id', response.id);",
+                  "    console.log('Created snippet ID:', response.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pattern_id\": 1,\n  \"title\": \"Two Sum - Array Problem\",\n  \"description\": \"Given an array of integers and a target, return indices of two numbers that add up to target.\",\n  \"difficulty\": \"beginner\",\n  \"language\": \"python\",\n  \"correct_code\": \"def two_sum(arr, target):\\n    seen = {}\\n    for i, num in enumerate(arr):\\n        complement = target - num\\n        if complement in seen:\\n            return [seen[complement], i]\\n        seen[num] = i\\n    return []\",\n  \"buggy_code\": \"def two_sum(arr, target):\\n    seen = {}\\n    for i, num in enumerate(arr):\\n        complement = target - num\\n        if complement in seen:\\n            return [seen[complement], i]\\n        # BUG: Missing the line to store num in seen!\\n    return []\",\n  \"bug_type\": \"missing_logic\",\n  \"bug_explanation\": \"The code fails to store the current number in the 'seen' dictionary, so it can never find the complement in future iterations.\",\n  \"test_cases\": [\n    {\n      \"input\": {\"arr\": [2, 7, 11, 15], \"target\": 9},\n      \"expected\": [0, 1]\n    },\n    {\n      \"input\": {\"arr\": [3, 2, 4], \"target\": 6},\n      \"expected\": [1, 2]\n    },\n    {\n      \"input\": {\"arr\": [3, 3], \"target\": 6},\n      \"expected\": [0, 1]\n    }\n  ],\n  \"hint_1\": \"Think about what data structure can help you remember what you've seen.\",\n  \"hint_2\": \"You're checking if the complement exists, but are you storing the numbers you've seen?\",\n  \"hint_3\": \"After checking for the complement, you need to add the current number to the dictionary: seen[num] = i\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/admin/snippets",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "admin", "snippets"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Snippet",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Two Sum - Updated Title\",\n  \"description\": \"Updated description\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/admin/snippets/{{snippet_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "admin", "snippets", "{{snippet_id}}"]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

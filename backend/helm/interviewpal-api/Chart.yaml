@@ -1,0 +1,15 @@
+apiVersion: v2
+name: bugdrill-api
+description: bugdrill API Helm Chart
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+maintainers:
+  - name: bugdrill Team
+    email: dev@bugdrill.com
+
+keywords:
+  - api
+  - golang
+  - interview-prep

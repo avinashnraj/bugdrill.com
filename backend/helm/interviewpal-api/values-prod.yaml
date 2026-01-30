@@ -1,0 +1,70 @@
+# Production environment overrides
+replicaCount: 3
+
+image:
+  repository: your-registry.com/bugdrill-api
+  pullPolicy: IfNotPresent
+  tag: "v1.0.0"
+
+config:
+  env: production
+  database:
+    sslMode: require
+  jwt:
+    accessExpiration: "15m"
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 60
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+  hosts:
+    - host: api.bugdrill.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: bugdrill-api-tls
+      hosts:
+        - api.bugdrill.com
+
+postgresql:
+  enabled: true
+  auth:
+    existingSecret: postgresql-secret
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+      storageClass: "gp3"
+  metrics:
+    enabled: true
+
+redis:
+  enabled: true
+  architecture: replication
+  auth:
+    existingSecret: redis-secret
+  master:
+    persistence:
+      enabled: true
+      size: 5Gi
+  replica:
+    replicaCount: 2
+  metrics:
+    enabled: true

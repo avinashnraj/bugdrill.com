@@ -1,0 +1,55 @@
+# Development environment overrides
+replicaCount: 1
+
+image:
+  repository: localhost:5000/bugdrill-api
+  pullPolicy: Always
+  tag: "dev"
+
+config:
+  env: development
+  database:
+    sslMode: disable
+  jwt:
+    accessExpiration: "1h"  # Longer for dev
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: false
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations: {}
+  hosts:
+    - host: api.bugdrill.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+postgresql:
+  enabled: true
+  auth:
+    username: postgres
+    password: postgres
+    database: bugdrill
+  primary:
+    persistence:
+      enabled: false  # No persistence in dev
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: false  # No persistence in dev

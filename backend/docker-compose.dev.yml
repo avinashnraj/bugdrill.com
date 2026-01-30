@@ -1,0 +1,24 @@
+# Development-only docker-compose override
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+version: '3.8'
+
+services:
+  dev:
+    # Override for development-specific settings
+    volumes:
+      - .:/app
+      - go_modules:/go/pkg/mod
+      - /app/tmp  # Exclude tmp directory from sync for better performance
+    
+    # Enable debugging
+    security_opt:
+      - "apparmor=unconfined"
+    cap_add:
+      - SYS_PTRACE
+    
+    # Development environment variables
+    environment:
+      - GO111MODULE=on
+      - GOPROXY=https://proxy.golang.org,direct
+      - GOPRIVATE=

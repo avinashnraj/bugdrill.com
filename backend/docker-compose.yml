@@ -1,0 +1,140 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: bugdrill-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bugdrill
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bugdrill-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: bugdrill-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - bugdrill-network
+
+  # Development Container (Go with hot-reload)
+  dev:
+    image: golang:1.22-alpine
+    container_name: bugdrill-dev
+    working_dir: /app
+    environment:
+      ENV: development
+      SERVER_PORT: 8080
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: bugdrill
+      DB_SSL_MODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_ACCESS_SECRET: dev-secret-change-in-production
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-in-production
+      CGO_ENABLED: 0
+      API_BASE_URL: http://localhost:8080
+    volumes:
+      - .:/app
+      - go_modules:/go/pkg/mod
+      - go_build_cache:/root/.cache/go-build
+    ports:
+      - "8080:8080"
+      - "2345:2345"  # Delve debugger port
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - bugdrill-network
+    command: >
+      sh -c "
+        apk add --no-cache git make gcc musl-dev curl &&
+        go install github.com/air-verse/air@v1.52.3 &&
+        go install github.com/go-delve/delve/cmd/dlv@v1.23.1 &&
+        go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0 &&
+        echo '✓ Development tools installed' &&
+        air -c .air.toml
+      "
+    stdin_open: true
+    tty: true
+
+  # API Service (Production build)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bugdrill-api
+    environment:
+      ENV: development
+      SERVER_PORT: 8081
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: bugdrill
+      DB_SSL_MODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_ACCESS_SECRET: dev-secret-change-in-production
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-in-production
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - bugdrill-network
+    restart: unless-stopped
+    profiles:
+      - production
+
+  # Functional Tests
+  functional-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.tests
+    container_name: bugdrill-tests
+    environment:
+      API_BASE_URL: http://dev:8080
+    depends_on:
+      - dev
+    networks:
+      - bugdrill-network
+    profiles:
+      - test
+
+volumes:
+  postgres_data:
+  redis_data:
+  go_modules:
+  go_build_cache:
+
+networks:
+  bugdrill-network:
+    driver: bridge
