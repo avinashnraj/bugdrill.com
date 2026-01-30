@@ -16,5 +16,6 @@ data:
   DB_SSL_MODE: {{ .Values.config.database.sslMode | quote }}
   REDIS_HOST: {{ .Values.config.redis.host | quote }}
   REDIS_PORT: {{ .Values.config.redis.port | quote }}
+  EXECUTOR_URL: {{ .Values.config.executor.url | quote }}
   JWT_ACCESS_EXPIRATION: {{ .Values.config.jwt.accessExpiration | quote }}
   JWT_REFRESH_EXPIRATION: {{ .Values.config.jwt.refreshExpiration | quote }}

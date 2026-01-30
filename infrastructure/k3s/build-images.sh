@@ -6,7 +6,7 @@ set -e
 
 # Configuration
 DOCKER_REGISTRY=${DOCKER_REGISTRY:-"docker.io"}  # Use Docker Hub by default
-DOCKER_USERNAME=${DOCKER_USERNAME:-"your-dockerhub-username"}  # CHANGE THIS
+DOCKER_USERNAME=${DOCKER_USERNAME:-"smithaavinash"}
 IMAGE_TAG=${IMAGE_TAG:-"latest"}
 
 echo "=== Building BugDrill Docker Images ==="
