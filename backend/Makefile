@@ -140,6 +140,29 @@ docker-build-k3d: ## Build and push images to k3d registry
 	docker build -t localhost:5000/bugdrill-api:dev .
 	docker push localhost:5000/bugdrill-api:dev
 
+# Production Docker Build and Push
+DOCKER_USERNAME ?= smithaavinash
+DOCKER_TAG ?= latest
+
+docker-build-prod: ## Build production Docker images for API and Executor
+	@echo "Building API image..."
+	docker build -t $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG) -f Dockerfile .
+	@echo "Building Executor image..."
+	docker build -t $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG) -f executor/Dockerfile .
+	@echo "✓ Images built successfully"
+
+docker-push-prod: ## Push production Docker images to Docker Hub
+	@echo "Pushing API image..."
+	docker push $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG)
+	@echo "Pushing Executor image..."
+	docker push $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG)
+	@echo "✓ Images pushed successfully"
+
+docker-build-push-prod: docker-build-prod docker-push-prod ## Build and push production images
+
+docker-login: ## Login to Docker Hub
+	docker login
+
 helm-install: ## Install Helm chart to k3d
 	helm upgrade --install bugdrill ./helm/bugdrill-api \
 		--namespace bugdrill \
