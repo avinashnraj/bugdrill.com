@@ -111,6 +111,19 @@ migrate-create: ## Create a new migration (usage: make migrate-create name=creat
 db-seed: ## Seed the database with sample data
 	$(GO) run ./cmd/seed
 
+db-seed-base: ## Seed base data (patterns + admin user)
+	@echo "Seeding base data (patterns + admin user)..."
+	docker exec -i bugdrill-postgres psql -U postgres -d bugdrill < migrations/seed_base.sql
+	@echo "✓ Base data seeded successfully"
+
+db-seed-snippets: ## Seed database with sample snippets (for development/testing)
+	@echo "Seeding sample snippets..."
+	docker exec -i bugdrill-postgres psql -U postgres -d bugdrill < migrations/seed_snippets.sql
+	@echo "✓ Sample snippets seeded successfully"
+
+db-seed-all: db-seed-base db-seed-snippets ## Seed all data (base + snippets)
+	@echo "✓ All data seeded successfully"
+
 # Cleanup
 clean: ## Clean build artifacts
 	rm -rf bin/

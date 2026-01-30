@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/bugdrill/backend/internal/model"
@@ -12,20 +13,23 @@ import (
 )
 
 type SnippetService struct {
-	snippetRepo *repository.SnippetRepository
-	patternRepo *repository.PatternRepository
-	redis       *redis.Client
+	snippetRepo     *repository.SnippetRepository
+	patternRepo     *repository.PatternRepository
+	redis           *redis.Client
+	executorService *ExecutorService
 }
 
 func NewSnippetService(
 	snippetRepo *repository.SnippetRepository,
 	patternRepo *repository.PatternRepository,
 	redis *redis.Client,
+	executorService *ExecutorService,
 ) *SnippetService {
 	return &SnippetService{
-		snippetRepo: snippetRepo,
-		patternRepo: patternRepo,
-		redis:       redis,
+		snippetRepo:     snippetRepo,
+		patternRepo:     patternRepo,
+		redis:           redis,
+		executorService: executorService,
 	}
 }
 
@@ -86,34 +90,67 @@ func (s *SnippetService) GetSnippet(snippetID string) (*model.Snippet, error) {
 }
 
 func (s *SnippetService) ExecuteCode(snippetID, code, language string) (*model.ExecuteCodeResponse, error) {
+	log.Printf("🔵 ExecuteCode called: snippetID=%s, codeLength=%d, language=%s", snippetID, len(code), language)
+	
 	// Get snippet to access test cases
 	snippet, err := s.GetSnippet(snippetID)
 	if err != nil {
+		log.Printf("❌ Failed to get snippet: %v", err)
 		return nil, err
 	}
 
-	// TODO: Implement actual code execution
-	// For now, return a mock response
+	log.Printf("🔵 Snippet retrieved, calling executor service...")
+	
+	// Execute code using executor service
+	execReq := ExecuteRequest{
+		Code:       code,
+		Language:   language,
+		TimeoutSec: 10,
+	}
+
+	execResp, err := s.executorService.Execute(execReq)
+	if err != nil {
+		log.Printf("❌ Executor service failed: %v", err)
+		return nil, fmt.Errorf("execution failed: %w", err)
+	}
+	
+	log.Printf("✅ Executor returned: success=%v, exitCode=%d", execResp.Success, execResp.ExitCode)
+
+	// snippet.TestCases is already parsed as []TestCase, convert to []map[string]interface{}
+	testCases := []map[string]interface{}{}
+	for _, tc := range snippet.TestCases {
+		testCases = append(testCases, map[string]interface{}{
+			"input":    tc.Input,
+			"expected": tc.Expected,
+		})
+	}
+
+	// Build test results (simplified - just shows the test cases)
+	// TODO: Actually run each test case separately and validate output
+	testResults := []model.TestResult{}
+	for i, tc := range testCases {
+		testResults = append(testResults, model.TestResult{
+			TestCase:        i + 1,
+			Input:           tc["input"],
+			Expected:        tc["expected"],
+			Actual:          tc["expected"], // Mock: Using expected as actual for now
+			Passed:          execResp.Success && execResp.ExitCode == 0,
+			ExecutionTimeMS: execResp.ExecutionTime,
+		})
+	}
+
+	// Determine overall correctness
+	// For now, it's correct if the code executed successfully (exit code 0)
+	isCorrect := execResp.Success && execResp.ExitCode == 0
+
 	response := &model.ExecuteCodeResponse{
 		ExecutionID: fmt.Sprintf("exec_%d", time.Now().Unix()),
 		Status:      "completed",
-		IsCorrect:   false,
-		TestResults: []model.TestResult{},
-		TotalTimeMS: 42,
-		Stdout:      "",
-		Stderr:      "",
-	}
-
-	// Run against test cases (simplified mock)
-	for i, tc := range snippet.TestCases {
-		response.TestResults = append(response.TestResults, model.TestResult{
-			TestCase:        i + 1,
-			Input:           tc.Input,
-			Expected:        tc.Expected,
-			Actual:          tc.Expected, // Mock: assume correct for now
-			Passed:          true,
-			ExecutionTimeMS: 10,
-		})
+		IsCorrect:   isCorrect,
+		TestResults: testResults,
+		TotalTimeMS: execResp.ExecutionTime,
+		Stdout:      execResp.Stdout,
+		Stderr:      execResp.Stderr,
 	}
 
 	return response, nil

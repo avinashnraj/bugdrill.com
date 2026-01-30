@@ -50,8 +50,9 @@ func SetupRouter(cfg *config.Config, db *database.DB, redis *redis.Client) *gin.
 	snippetRepo := repository.NewSnippetRepository(db)
 
 	// Initialize services
+	executorService := service.NewExecutorService()
 	authService := service.NewAuthService(cfg, userRepo, redis)
-	snippetService := service.NewSnippetService(snippetRepo, patternRepo, redis)
+	snippetService := service.NewSnippetService(snippetRepo, patternRepo, redis, executorService)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authService)

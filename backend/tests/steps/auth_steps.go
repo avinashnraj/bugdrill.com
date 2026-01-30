@@ -15,14 +15,16 @@ import (
 )
 
 type APIContext struct {
-	BaseURL        string
-	Response       *http.Response
-	ResponseBody   map[string]interface{}
-	RawResponse    []byte
-	AccessToken    string
-	RefreshToken   string
-	OldAccessToken string
-	HTTPClient     *http.Client
+	BaseURL          string
+	Response         *http.Response
+	ResponseBody     map[string]interface{}
+	RawResponse      []byte
+	AccessToken      string
+	RefreshToken     string
+	OldAccessToken   string
+	HTTPClient       *http.Client
+	CurrentSnippet   map[string]interface{}
+	ExecutionResult  map[string]interface{}
 }
 
 func NewAPIContext() *APIContext {
@@ -375,4 +377,17 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I use my refresh token to get a new access token$`, apiCtx.iUseMyRefreshTokenToGetANewAccessToken)
 	ctx.Step(`^I should receive a new access token$`, apiCtx.iShouldReceiveANewAccessToken)
 	ctx.Step(`^the new token should be different from the old token$`, apiCtx.theNewTokenShouldBeDifferentFromTheOldToken)
+
+	// Code execution
+	ctx.Step(`^I have seeded the sample snippets$`, apiCtx.iHaveSeededTheSampleSnippets)
+	ctx.Step(`^I get the first snippet for pattern (\d+)$`, apiCtx.iGetTheFirstSnippetForPattern)
+	ctx.Step(`^I execute the buggy code for that snippet$`, apiCtx.iExecuteTheBuggyCodeForThatSnippet)
+	ctx.Step(`^I execute the correct code for that snippet$`, apiCtx.iExecuteTheCorrectCodeForThatSnippet)
+	ctx.Step(`^I execute invalid Python code$`, apiCtx.iExecuteInvalidPythonCode)
+	ctx.Step(`^the execution should complete$`, apiCtx.theExecutionShouldComplete)
+	ctx.Step(`^the execution should be correct$`, apiCtx.theExecutionShouldBeCorrect)
+	ctx.Step(`^the execution should not be correct$`, apiCtx.theExecutionShouldNotBeCorrect)
+	ctx.Step(`^I should see execution output$`, apiCtx.iShouldSeeExecutionOutput)
+	ctx.Step(`^I should see an error in stderr$`, apiCtx.iShouldSeeAnErrorInStderr)
+	ctx.Step(`^the test should have passed$`, apiCtx.theTestShouldHavePassed)
 }
