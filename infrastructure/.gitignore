@@ -1,0 +1,39 @@
+# .gitignore for infrastructure files
+
+# Terraform files
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate
+**/terraform.tfstate.backup
+**/terraform.tfvars
+**/.terraform.tfstate.lock.info
+
+# Backup files
+**/backups/
+**/*.sql.gz
+**/*.sql
+
+# Kubeconfig files
+**/*.kubeconfig
+**/kubeconfig
+**/.kube/
+
+# Log files
+**/*.log
+
+# Temporary files
+**/tmp/
+**/.tmp/
+
+# SSH keys
+**/*.pem
+**/*.key
+**/id_rsa*
+
+# AWS credentials
+**/.aws/
+**/credentials
+
+# Local environment files
+**/.env
+**/.env.local

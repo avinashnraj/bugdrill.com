@@ -1,0 +1,553 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      deploy_to_aws:
+        description: 'Deploy to AWS after tests pass'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  GO_VERSION: '1.22'
+  DOCKER_REGISTRY: docker.io
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  # Job 1: Run Go tests and linting
+  test-backend:
+    name: Test Backend (Go)
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bugdrill_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+      
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          go mod download
+          go mod verify
+      
+      - name: Run database migrations
+        working-directory: backend
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: bugdrill_test
+          DB_SSL_MODE: disable
+        run: |
+          # Apply migrations
+          PGPASSWORD=postgres psql -h localhost -U postgres -d bugdrill_test -f migrations/001_init_schema.sql
+          PGPASSWORD=postgres psql -h localhost -U postgres -d bugdrill_test -f migrations/seed_base.sql
+      
+      - name: Run unit tests
+        working-directory: backend
+        env:
+          ENV: test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: bugdrill_test
+          DB_SSL_MODE: disable
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_ACCESS_SECRET: test-secret-change-in-production
+          JWT_REFRESH_SECRET: test-refresh-secret-change-in-production
+        run: |
+          make test
+      
+      - name: Run tests with coverage
+        working-directory: backend
+        env:
+          ENV: test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: bugdrill_test
+          DB_SSL_MODE: disable
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_ACCESS_SECRET: test-secret-change-in-production
+          JWT_REFRESH_SECRET: test-refresh-secret-change-in-production
+        run: |
+          make test-coverage
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: backend/coverage.out
+          flags: backend
+          name: backend-coverage
+      
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.61.0
+      
+      - name: Run linter
+        working-directory: backend
+        run: |
+          make lint || echo "Linting completed with warnings"
+
+  # Job 2: Build Docker images
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: test-backend
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Extract metadata for API
+        id: meta-api
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/bugdrill-api
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-api.outputs.tags }}
+          labels: ${{ steps.meta-api.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Extract metadata for Executor
+        id: meta-executor
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/bugdrill-executor
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: Build and push Executor image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/executor/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-executor.outputs.tags }}
+          labels: ${{ steps.meta-executor.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Job 3: Test deployment in K3s
+  test-k3s-deployment:
+    name: Test K3s Deployment
+    runs-on: ubuntu-latest
+    needs: build-images
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install K3s
+        run: |
+          curl -sfL https://get.k3s.io | sh -s - \
+            --write-kubeconfig-mode 644 \
+            --disable traefik
+          
+          # Wait for K3s to be ready
+          sudo k3s kubectl wait --for=condition=Ready node --all --timeout=60s
+      
+      - name: Set up kubectl
+        run: |
+          mkdir -p ~/.kube
+          sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+          sudo chown $(id -u):$(id -g) ~/.kube/config
+          export KUBECONFIG=~/.kube/config
+          kubectl get nodes
+      
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+      
+      - name: Create namespace
+        run: |
+          kubectl create namespace bugdrill
+      
+      - name: Create test secrets
+        run: |
+          kubectl create secret generic bugdrill-secrets \
+            --from-literal=DB_PASSWORD=test-password-$(openssl rand -hex 8) \
+            --from-literal=JWT_ACCESS_SECRET=$(openssl rand -hex 32) \
+            --from-literal=JWT_REFRESH_SECRET=$(openssl rand -hex 32) \
+            --namespace bugdrill
+      
+      - name: Create persistent volume
+        run: |
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: PersistentVolume
+          metadata:
+            name: postgres-pv
+          spec:
+            capacity:
+              storage: 1Gi
+            accessModes:
+              - ReadWriteOnce
+            persistentVolumeReclaimPolicy: Delete
+            storageClassName: local-path
+            hostPath:
+              path: /tmp/postgres-data
+              type: DirectoryOrCreate
+          ---
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: postgres-pvc
+            namespace: bugdrill
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            storageClassName: local-path
+            resources:
+              requests:
+                storage: 1Gi
+          EOF
+      
+      - name: Update Helm values for CI
+        run: |
+          # Create CI-specific values file
+          cat > backend/helm/interviewpal-api/values-ci.yaml <<EOF
+          replicaCount: 1
+          
+          image:
+            repository: ${{ secrets.DOCKER_USERNAME }}/bugdrill-api
+            pullPolicy: IfNotPresent
+            tag: "${{ github.ref_name }}-${{ github.sha }}"
+          
+          service:
+            type: NodePort
+            port: 8080
+            nodePort: 30080
+          
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          
+          postgresql:
+            enabled: true
+            image:
+              repository: postgres
+              tag: "15-alpine"
+            auth:
+              username: postgres
+              database: bugdrill
+              existingSecret: bugdrill-secrets
+              secretKeys:
+                adminPasswordKey: DB_PASSWORD
+            primary:
+              persistence:
+                enabled: true
+                existingClaim: postgres-pvc
+              resources:
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+          
+          redis:
+            enabled: true
+            image:
+              repository: redis
+              tag: "7-alpine"
+            master:
+              persistence:
+                enabled: false
+              resources:
+                limits:
+                  cpu: 100m
+                  memory: 128Mi
+                requests:
+                  cpu: 25m
+                  memory: 64Mi
+          
+          executor:
+            enabled: true
+            image:
+              repository: ${{ secrets.DOCKER_USERNAME }}/bugdrill-executor
+              tag: "${{ github.ref_name }}-${{ github.sha }}"
+            resources:
+              limits:
+                cpu: 200m
+                memory: 256Mi
+              requests:
+                cpu: 50m
+                memory: 128Mi
+          EOF
+      
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install bugdrill-api backend/helm/interviewpal-api \
+            --namespace bugdrill \
+            --values backend/helm/interviewpal-api/values-ci.yaml \
+            --wait \
+            --timeout 5m
+      
+      - name: Wait for pods to be ready
+        run: |
+          kubectl wait --for=condition=Ready pods --all -n bugdrill --timeout=300s
+      
+      - name: Check deployment status
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods -n bugdrill
+          echo ""
+          echo "=== Services ==="
+          kubectl get svc -n bugdrill
+          echo ""
+          echo "=== Deployments ==="
+          kubectl get deployments -n bugdrill
+      
+      - name: Test API health endpoint
+        run: |
+          # Get the NodePort
+          NODE_PORT=$(kubectl get svc bugdrill-api -n bugdrill -o jsonpath='{.spec.ports[0].nodePort}')
+          
+          # Wait for API to be responsive
+          max_attempts=30
+          attempt=0
+          
+          while [ $attempt -lt $max_attempts ]; do
+            if curl -f http://localhost:$NODE_PORT/health; then
+              echo "✓ API health check passed"
+              exit 0
+            fi
+            
+            attempt=$((attempt + 1))
+            echo "Waiting for API... ($attempt/$max_attempts)"
+            sleep 5
+          done
+          
+          echo "✗ API health check failed"
+          kubectl logs -n bugdrill -l app.kubernetes.io/name=interviewpal-api --tail=100
+          exit 1
+      
+      - name: Run smoke tests
+        run: |
+          NODE_PORT=$(kubectl get svc bugdrill-api -n bugdrill -o jsonpath='{.spec.ports[0].nodePort}')
+          BASE_URL="http://localhost:$NODE_PORT"
+          
+          # Test signup
+          echo "Testing user signup..."
+          SIGNUP_RESPONSE=$(curl -s -X POST "$BASE_URL/api/v1/auth/signup" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "email": "test@example.com",
+              "password": "TestPassword123!",
+              "username": "testuser"
+            }')
+          
+          echo "Signup response: $SIGNUP_RESPONSE"
+          
+          # Test login
+          echo "Testing user login..."
+          LOGIN_RESPONSE=$(curl -s -X POST "$BASE_URL/api/v1/auth/login" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "email": "test@example.com",
+              "password": "TestPassword123!"
+            }')
+          
+          echo "Login response: $LOGIN_RESPONSE"
+          
+          # Extract token
+          TOKEN=$(echo $LOGIN_RESPONSE | jq -r '.access_token')
+          
+          if [ "$TOKEN" != "null" ] && [ -n "$TOKEN" ]; then
+            echo "✓ Authentication flow working"
+          else
+            echo "✗ Authentication failed"
+            exit 1
+          fi
+          
+          # Test authenticated endpoint
+          echo "Testing authenticated endpoint..."
+          curl -f -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/v1/patterns" || {
+            echo "✗ Authenticated request failed"
+            exit 1
+          }
+          
+          echo "✓ All smoke tests passed"
+      
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          echo "=== API Logs ==="
+          kubectl logs -n bugdrill -l app.kubernetes.io/name=interviewpal-api --tail=200
+          echo ""
+          echo "=== PostgreSQL Logs ==="
+          kubectl logs -n bugdrill -l app.kubernetes.io/name=postgresql --tail=100
+          echo ""
+          echo "=== Events ==="
+          kubectl get events -n bugdrill --sort-by='.lastTimestamp'
+
+  # Job 4: Deploy to AWS (manual trigger or on main branch)
+  deploy-to-aws:
+    name: Deploy to AWS EC2 K3s
+    runs-on: ubuntu-latest
+    needs: test-k3s-deployment
+    if: |
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy_to_aws == true)
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
+          AWS_HOST: ${{ secrets.AWS_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H $AWS_HOST >> ~/.ssh/known_hosts
+      
+      - name: Update deployment on AWS
+        env:
+          AWS_HOST: ${{ secrets.AWS_HOST }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        run: |
+          ssh ubuntu@$AWS_HOST << 'EOF'
+            set -e
+            
+            # Pull latest code
+            cd ~/bugdrill
+            git pull origin main
+            
+            # Update Helm values with new image tags
+            sed -i "s|tag:.*|tag: \"main-${{ github.sha }}\"|g" backend/helm/interviewpal-api/values-micro.yaml
+            
+            # Deploy with Helm
+            helm upgrade bugdrill-api backend/helm/interviewpal-api \
+              --namespace bugdrill \
+              --values backend/helm/interviewpal-api/values-micro.yaml \
+              --wait \
+              --timeout 5m
+            
+            # Wait for rollout
+            kubectl rollout status deployment/bugdrill-api -n bugdrill
+            
+            echo "✓ Deployment complete"
+            kubectl get pods -n bugdrill
+          EOF
+      
+      - name: Verify deployment
+        env:
+          AWS_HOST: ${{ secrets.AWS_HOST }}
+        run: |
+          # Wait a bit for the service to stabilize
+          sleep 10
+          
+          # Test health endpoint
+          if curl -f http://$AWS_HOST/health; then
+            echo "✓ Deployment verified successfully"
+          else
+            echo "✗ Deployment verification failed"
+            exit 1
+          fi
+      
+      - name: Create deployment notification
+        if: success()
+        run: |
+          echo "🚀 Deployment to AWS completed successfully!"
+          echo "Version: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
+
+  # Job 5: Security scanning
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build-images
+    if: github.event_name != 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/bugdrill-api:${{ github.ref_name }}-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'

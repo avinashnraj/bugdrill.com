@@ -1,0 +1,11 @@
+# Copy this file to terraform.tfvars and update with your values
+
+aws_region          = "us-east-1"  # Choose your preferred region
+project_name        = "bugdrill"
+ssh_public_key_path = "~/.ssh/id_rsa.pub"  # Path to your SSH public key
+my_ip               = "203.0.113.0/32"     # YOUR IP ADDRESS HERE (find it: curl ifconfig.me)
+
+# Cost optimization tips:
+# - us-east-1 is usually cheapest
+# - t4g.micro (ARM) is free tier eligible and cheapest
+# - Enable detailed monitoring = $2/month extra (not worth it for MVP)

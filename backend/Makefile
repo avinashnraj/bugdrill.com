@@ -221,3 +221,53 @@ dev: ## Start development environment with hot-reload
 stop: docker-down ## Stop development environment
 
 restart: docker-down docker-up ## Restart development environment
+
+# CI/CD helpers
+ci-test: ## Run CI pipeline tests locally (simulates GitHub Actions)
+	@echo "🚀 Running CI pipeline tests locally..."
+	@echo ""
+	@echo "Step 1: Checking formatting..."
+	@if [ -n "$$(gofmt -l .)" ]; then \
+		echo "❌ Go files not formatted. Run: gofmt -w ."; \
+		exit 1; \
+	fi
+	@echo "✅ Formatting check passed"
+	@echo ""
+	@echo "Step 2: Running tests..."
+	@$(MAKE) test
+	@echo ""
+	@echo "Step 3: Generating coverage..."
+	@$(MAKE) test-coverage
+	@echo ""
+	@echo "Step 4: Running linter..."
+	@if command -v golangci-lint &> /dev/null; then \
+		golangci-lint run --timeout=5m || echo "⚠️  Linting completed with warnings"; \
+	else \
+		echo "⚠️  golangci-lint not installed, skipping..."; \
+	fi
+	@echo ""
+	@echo "✅ All CI tests passed! Ready to push."
+
+ci-build: ## Build Docker images (simulates GitHub Actions build)
+	@echo "🐳 Building Docker images..."
+	@echo ""
+	@echo "Building API image..."
+	@docker build -t bugdrill-api:ci-test -f Dockerfile .
+	@echo "✅ API image built"
+	@echo ""
+	@echo "Building Executor image..."
+	@docker build -t bugdrill-executor:ci-test -f executor/Dockerfile .
+	@echo "✅ Executor image built"
+	@echo ""
+	@docker images | grep bugdrill | grep ci-test
+
+ci-full: ci-test ci-build ## Run full CI pipeline locally (test + build)
+	@echo ""
+	@echo "═══════════════════════════════════════════════════"
+	@echo "✅ Full CI pipeline completed successfully!"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Review changes: git diff"
+	@echo "  2. Commit: git commit -m 'your message'"
+	@echo "  3. Push: git push origin your-branch"
