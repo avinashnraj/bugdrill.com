@@ -77,7 +77,7 @@ jobs:
         run: |
           # Apply migrations
           PGPASSWORD=postgres psql -h localhost -U postgres -d bugdrill_test -f migrations/001_init_schema.sql
-          PGPASSWORD=postgres psql -h localhost -U postgres -d bugdrill_test -f migrations/seed_base.sql
+          PGPASSWORD=postgres psql -h localhost -U postgres -d bugdrill_test -f migrations/002_seed_data.sql
       
       - name: Run unit tests
         working-directory: backend
