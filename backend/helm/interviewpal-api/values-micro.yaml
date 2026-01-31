@@ -177,9 +177,9 @@ executor:
   
   # Security for code execution
   securityContext:
-    privileged: false
     runAsNonRoot: true
     runAsUser: 1000
+    fsGroup: 1000
 
 # Health checks
 livenessProbe:

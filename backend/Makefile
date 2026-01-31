@@ -144,21 +144,26 @@ docker-build-k3d: ## Build and push images to k3d registry
 DOCKER_USERNAME ?= smithaavinash
 DOCKER_TAG ?= latest
 
-docker-build-prod: ## Build production Docker images for API and Executor
-	@echo "Building API image..."
-	docker build -t $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG) -f Dockerfile .
-	@echo "Building Executor image..."
-	docker build -t $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG) -f executor/Dockerfile .
-	@echo "✓ Images built successfully"
+docker-buildx-setup: ## Setup Docker buildx for multi-arch builds
+	@docker buildx create --name bugdrill-builder --use 2>/dev/null || docker buildx use bugdrill-builder
+	@docker buildx inspect --bootstrap
 
-docker-push-prod: ## Push production Docker images to Docker Hub
-	@echo "Pushing API image..."
-	docker push $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG)
-	@echo "Pushing Executor image..."
-	docker push $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG)
-	@echo "✓ Images pushed successfully"
+docker-build-prod: docker-buildx-setup ## Build production Docker images for ARM64 and AMD64
+	@echo "Building multi-arch API image (linux/amd64,linux/arm64)..."
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-t $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG) \
+		-f Dockerfile \
+		--push \
+		.
+	@echo "Building multi-arch Executor image (linux/amd64,linux/arm64)..."
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-t $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG) \
+		-f executor/Dockerfile \
+		--push \
+		.
+	@echo "✓ Multi-arch images built and pushed successfully"
 
-docker-build-push-prod: docker-build-prod docker-push-prod ## Build and push production images
+docker-build-push-prod: docker-build-prod ## Build and push production images (alias)
 
 docker-login: ## Login to Docker Hub
 	docker login
