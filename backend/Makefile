@@ -588,18 +588,41 @@ ec2-check-k3s: ## Check if k3s is installed
 		exit 1; \
 	fi
 
+ec2-fix-kubeconfig: ## Fix kubectl permissions for current user
+	@echo "🔧 Fixing kubeconfig permissions..."
+	@sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+	@mkdir -p $$HOME/.kube
+	@sudo cp /etc/rancher/k3s/k3s.yaml $$HOME/.kube/config
+	@sudo chown $$USER:$$USER $$HOME/.kube/config
+	@echo "✅ Kubeconfig fixed"
+	@echo ""
+	@echo "📝 Add to your ~/.bashrc or ~/.zshrc:"
+	@echo "   export KUBECONFIG=~/.kube/config"
+	@echo ""
+	@echo "Then run: source ~/.bashrc"
+
 ec2-install-k3s: ## Install k3s on EC2
 	@echo "📦 Installing k3s..."
 	@if command -v k3s >/dev/null 2>&1; then \
 		echo "⚠️  k3s is already installed. Use 'make ec2-rebuild-k3s' to reinstall."; \
 		k3s --version; \
 	else \
-		curl -sfL https://get.k3s.io | sh -; \
+		curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644; \
 		echo "⏳ Waiting for k3s to be ready..."; \
 		sleep 10; \
 		sudo k3s kubectl wait --for=condition=ready node --all --timeout=60s; \
+		echo "🔧 Setting up kubeconfig for current user..."; \
+		sudo chmod 644 /etc/rancher/k3s/k3s.yaml; \
+		mkdir -p $$HOME/.kube; \
+		sudo cp /etc/rancher/k3s/k3s.yaml $$HOME/.kube/config; \
+		sudo chown $$USER:$$USER $$HOME/.kube/config; \
 		echo "✅ k3s installed successfully"; \
 		k3s --version; \
+		echo ""; \
+		echo "📝 Add to your ~/.bashrc:"; \
+		echo "   export KUBECONFIG=~/.kube/config"; \
+		echo ""; \
+		echo "Then run: source ~/.bashrc"; \
 	fi
 
 ec2-uninstall-k3s: ## Uninstall k3s completely
