@@ -1,0 +1,19 @@
+{{- if .Values.executor.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: executor-service
+  labels:
+    {{- include "bugdrill-api.labels" . | nindent 4 }}
+    app.kubernetes.io/component: executor
+spec:
+  type: {{ .Values.executor.service.type }}
+  ports:
+  - port: {{ .Values.executor.service.port }}
+    targetPort: 8081
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "bugdrill-api.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: executor
+{{- end }}

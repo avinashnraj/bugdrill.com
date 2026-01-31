@@ -66,7 +66,7 @@ func (ctx *APIContext) iSignupWithANewUniqueUser() error {
 	timestamp := time.Now().Unix()
 	ctx.TestUserEmail = fmt.Sprintf("test-%d@example.com", timestamp)
 	ctx.TestUserPassword = "SecurePass123!"
-	
+
 	return ctx.iSignupWithEmailAndPassword(ctx.TestUserEmail, ctx.TestUserPassword)
 }
 
@@ -228,7 +228,7 @@ func (ctx *APIContext) iShouldReceiveAUnauthorizedError() error {
 func (ctx *APIContext) iHaveLoggedInAsWithPassword(email, password string) error {
 	// Try signup, ignore error if user exists
 	ctx.iSignupWithEmailAndPassword(email, password)
-	
+
 	// Always login to get fresh tokens
 	if err := ctx.iLoginWithEmailAndPassword(email, password); err != nil {
 		return err

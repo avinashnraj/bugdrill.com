@@ -4,7 +4,7 @@
 replicaCount: 1  # Single replica for cost savings
 
 image:
-  repository: YOUR_DOCKERHUB_USERNAME/bugdrill-api
+  repository: smithaavinash/bugdrill-api
   pullPolicy: IfNotPresent
   tag: "latest"
 
@@ -14,6 +14,7 @@ fullnameOverride: ""
 
 serviceAccount:
   create: true
+  automount: true
   annotations: {}
   name: ""
 
@@ -158,7 +159,7 @@ redis:
 executor:
   enabled: true
   image:
-    repository: YOUR_DOCKERHUB_USERNAME/bugdrill-executor
+    repository: smithaavinash/bugdrill-executor
     tag: "latest"
   
   replicaCount: 1
@@ -177,9 +178,9 @@ executor:
   
   # Security for code execution
   securityContext:
-    privileged: false
     runAsNonRoot: true
     runAsUser: 1000
+    fsGroup: 1000
 
 # Health checks
 livenessProbe:

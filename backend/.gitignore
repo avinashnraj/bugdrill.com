@@ -38,6 +38,8 @@ Thumbs.db
 # Logs
 *.log
 logs/
+test-*.log
+test-results.txt
 
 # Database
 *.db
@@ -46,3 +48,13 @@ logs/
 # Temporary files
 tmp/
 temp/
+
+# Makefile backups
+Makefile.backup
+Makefile.old
+Makefile.new
+Makefile.test
+
+# Dockerfile backups
+Dockerfile.*.old
+executor/Dockerfile.old

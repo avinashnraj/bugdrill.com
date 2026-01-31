@@ -8,9 +8,9 @@ import (
 
 // Execution context
 type ExecutionContext struct {
-	CurrentSnippet   map[string]interface{}
-	ExecutionResult  map[string]interface{}
-	LastExecutionID  string
+	CurrentSnippet  map[string]interface{}
+	ExecutionResult map[string]interface{}
+	LastExecutionID string
 }
 
 // Seed sample snippets
@@ -19,7 +19,7 @@ func (ctx *APIContext) iHaveSeededTheSampleSnippets() error {
 	headers := map[string]string{
 		"Authorization": "Bearer " + ctx.AccessToken,
 	}
-	
+
 	if err := ctx.makeJSONRequest("GET", "/api/v1/patterns/1/snippets", nil, headers); err != nil {
 		return err
 	}
@@ -74,12 +74,12 @@ func (ctx *APIContext) iGetTheFirstSnippetForPattern(patternID int) error {
 	if ctx.CurrentSnippet == nil {
 		ctx.CurrentSnippet = make(map[string]interface{})
 	}
-	
+
 	var snippet map[string]interface{}
 	if err := json.Unmarshal(ctx.RawResponse, &snippet); err != nil {
 		return fmt.Errorf("failed to parse snippet: %w", err)
 	}
-	
+
 	ctx.CurrentSnippet = snippet
 
 	return nil
@@ -104,7 +104,7 @@ func (ctx *APIContext) iExecuteTheCorrectCodeForThatSnippet() error {
 	}
 
 	snippetID := ctx.CurrentSnippet["id"].(string)
-	
+
 	// The API intentionally doesn't return correct_code to prevent cheating
 	// For testing purposes, we'll use the known correct solution for "Two Sum Sorted"
 	correctCode := `def twoSum(nums: list[int], target: int) -> list[int]:

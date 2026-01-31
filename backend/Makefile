@@ -1,17 +1,23 @@
-.PHONY: help build run test docker-up docker-down docker-logs migrate-up migrate-down clean
+.PHONY: help build run test clean
 
-# Variables
 APP_NAME=bugdrill-api
 DOCKER_COMPOSE=docker-compose
 GO=go
+K3D_CLUSTER_NAME ?= bugdrill-local
+K3D_REGISTRY_PORT ?= 5005
+K3D_API_PORT ?= 8080
+NAMESPACE ?= bugdrill
+DOCKER_USERNAME ?= smithaavinash
+DOCKER_TAG ?= latest
+EC2_NAMESPACE ?= bugdrill
+EC2_API_PORT ?= 8080
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
 	@echo ''
 	@echo 'Available targets:'
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-30s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-# Development
 install: ## Install dependencies
 	$(GO) mod download
 	$(GO) mod tidy
@@ -25,16 +31,9 @@ run: ## Run the application locally
 test: ## Run tests
 	$(GO) test -v ./...
 
-test-coverage: ## Run tests with coverage
-	$(GO) test -v -coverprofile=coverage.out ./...
-	$(GO) tool cover -html=coverage.out
-
-lint: ## Run linter
-	golangci-lint run
-
-# Docker
-docker-build: ## Build Docker image
-	docker build -t $(APP_NAME):latest .
+clean: ## Clean build artifacts
+	rm -rf bin/
+	rm -f coverage.out
 
 docker-up: ## Start all services with Docker Compose
 	$(DOCKER_COMPOSE) up -d
@@ -42,232 +41,289 @@ docker-up: ## Start all services with Docker Compose
 docker-down: ## Stop all services
 	$(DOCKER_COMPOSE) down
 
-docker-logs: ## View logs from all services
-	$(DOCKER_COMPOSE) logs -f
+docker-buildx-setup: ## Setup Docker buildx for multi-arch builds
+	@docker buildx create --name bugdrill-builder --use 2>/dev/null || docker buildx use bugdrill-builder
+	@docker buildx inspect --bootstrap
 
-docker-restart: ## Restart all services
-	$(DOCKER_COMPOSE) restart
+docker-build-local: ## Build local AMD64 images for k3d
+	@echo "🔨 Building local AMD64 images..."
+	@docker buildx build --platform linux/amd64 --target api -t $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG) --load .
+	@docker buildx build --platform linux/amd64 --target executor -t $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG) --load .
+	@docker buildx build --platform linux/amd64 --target tests -t $(DOCKER_USERNAME)/bugdrill-tests:$(DOCKER_TAG) --load .
+	@echo "✓ Local AMD64 images built"
 
-docker-clean: ## Remove all containers, volumes, and images
-	$(DOCKER_COMPOSE) down -v
-	docker rmi $(APP_NAME):latest 2>/dev/null || true
+docker-push-local: ## Push locally built images to Docker Hub
+	@echo "📤 Pushing images..."
+	@docker push $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG)
+	@docker push $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG)
+	@docker push $(DOCKER_USERNAME)/bugdrill-tests:$(DOCKER_TAG)
+	@echo "✓ Images pushed"
 
-docker-dev: ## Start development container with hot-reload
-	$(DOCKER_COMPOSE) up dev
-
-docker-dev-build: ## Rebuild and start development container
-	$(DOCKER_COMPOSE) up --build dev
-
-docker-shell: ## Open shell in development container
-	docker exec -it bugdrill-dev sh
-
-docker-logs-dev: ## View development container logs
-	$(DOCKER_COMPOSE) logs -f dev
-
-api-reload: ## Rebuild and restart API service
-	@echo "Rebuilding API Docker image..."
-	$(DOCKER_COMPOSE) build api
-	@echo "Restarting API container..."
-	$(DOCKER_COMPOSE) up -d api
-	@echo "✓ API service reloaded successfully"
-
-dev-reload: ## Restart development container (triggers Air hot-reload)
-	@echo "Restarting development container..."
-	$(DOCKER_COMPOSE) restart dev
-	@echo "✓ Development service restarted (Air will hot-reload)"
-
-reload: ## Smart reload - restarts dev container if running, otherwise rebuilds api
-	@if docker ps --format '{{.Names}}' | grep -q "bugdrill-dev"; then \
-		echo "Development container detected - restarting..."; \
-		$(DOCKER_COMPOSE) restart dev; \
-		echo "✓ Development service restarted (Air will hot-reload)"; \
-	else \
-		echo "Development container not running - rebuilding API..."; \
-		$(DOCKER_COMPOSE) build api; \
-		echo "Restarting API container..."; \
-		$(DOCKER_COMPOSE) up -d api; \
-		echo "✓ API service reloaded successfully"; \
-	fi
-
-# Database
-migrate-up: ## Run database migrations
-	$(GO) run ./cmd/migrate up
-
-migrate-down: ## Rollback database migrations
-	$(GO) run ./cmd/migrate down
-
-migrate-create: ## Create a new migration (usage: make migrate-create name=create_users_table)
-	@if [ -z "$(name)" ]; then \
-		echo "Error: name is required. Usage: make migrate-create name=your_migration_name"; \
-		exit 1; \
-	fi
-	@mkdir -p migrations
-	@timestamp=$$(date +%Y%m%d%H%M%S); \
-	echo "Creating migration: migrations/$${timestamp}_$(name).up.sql"; \
-	touch migrations/$${timestamp}_$(name).up.sql; \
-	touch migrations/$${timestamp}_$(name).down.sql; \
-	echo "Migration files created successfully"
-
-db-seed: ## Seed the database with sample data
-	$(GO) run ./cmd/seed
-
-db-seed-base: ## Seed base data (patterns + admin user)
-	@echo "Seeding base data (patterns + admin user)..."
-	docker exec -i bugdrill-postgres psql -U postgres -d bugdrill < migrations/seed_base.sql
-	@echo "✓ Base data seeded successfully"
-
-db-seed-snippets: ## Seed database with sample snippets (for development/testing)
-	@echo "Seeding sample snippets..."
-	docker exec -i bugdrill-postgres psql -U postgres -d bugdrill < migrations/seed_snippets.sql
-	@echo "✓ Sample snippets seeded successfully"
-
-db-seed-all: db-seed-base db-seed-snippets ## Seed all data (base + snippets)
-	@echo "✓ All data seeded successfully"
-
-# Cleanup
-clean: ## Clean build artifacts
-	rm -rf bin/
-	rm -f coverage.out
-
-# k3d and Kubernetes
-k3d-create: ## Create k3d cluster
-	@bash scripts/k3d-create.sh
+production-build-push: docker-buildx-setup ## Build and push ARM64 images for production
+	@echo "═══════════════════════════════════════════════════"
+	@echo "🏗️  BUILDING PRODUCTION ARM64 IMAGES"
+	@echo "═══════════════════════════════════════════════════"
+	@docker buildx build --platform linux/arm64 --target api -t $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG) --push .
+	@docker buildx build --platform linux/arm64 --target executor -t $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG) --push .
+	@docker buildx build --platform linux/arm64 --target tests -t $(DOCKER_USERNAME)/bugdrill-tests:$(DOCKER_TAG) --push .
+	@echo "═══════════════════════════════════════════════════"
+	@echo "✅ ALL PRODUCTION IMAGES READY"
+	@echo "═══════════════════════════════════════════════════"
+	@echo "Images: $(DOCKER_USERNAME)/bugdrill-{api,executor,tests}:$(DOCKER_TAG)"
+	@echo "Next: make ec2-full-deploy (on EC2)"
 
 k3d-destroy: ## Destroy k3d cluster
-	@bash scripts/k3d-destroy.sh
+	@echo "🗑️  Destroying k3d cluster: $(K3D_CLUSTER_NAME)"
+	@k3d cluster delete $(K3D_CLUSTER_NAME) 2>/dev/null || echo "Cluster doesn't exist"
+	@echo "✅ Cluster destroyed"
 
-docker-build-k3d: ## Build and push images to k3d registry
-	docker build -t localhost:5000/bugdrill-api:dev .
-	docker push localhost:5000/bugdrill-api:dev
+k3d-create: k3d-destroy ## Create fresh k3d cluster
+	@echo "🚀 Creating k3d cluster: $(K3D_CLUSTER_NAME)"
+	@k3d cluster create $(K3D_CLUSTER_NAME) --agents 1 --port "80:80@loadbalancer" --port "443:443@loadbalancer" --registry-create k3d-registry.localhost:$(K3D_REGISTRY_PORT) --wait
+	@kubectl cluster-info
+	@echo "✅ Cluster created"
 
-helm-install: ## Install Helm chart to k3d
-	helm upgrade --install bugdrill ./helm/bugdrill-api \
-		--namespace bugdrill \
-		--create-namespace \
-		--values ./helm/bugdrill-api/values-dev.yaml \
-		--wait
+k3d-deploy-postgres: ## Deploy PostgreSQL to k3d
+	@echo "🐘 Deploying PostgreSQL..."
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@helm upgrade --install bugdrill-postgres oci://registry-1.docker.io/bitnamicharts/postgresql \
+		--namespace $(NAMESPACE) \
+		--set auth.username=postgres \
+		--set auth.password=postgres \
+		--set auth.database=bugdrill \
+		--set primary.persistence.size=1Gi \
+		--wait --timeout=5m
+	@echo "✅ PostgreSQL deployed"
 
-helm-uninstall: ## Uninstall Helm chart
-	helm uninstall bugdrill --namespace bugdrill
+k3d-deploy-redis: ## Deploy Redis to k3d
+	@echo "🔴 Deploying Redis..."
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@helm upgrade --install bugdrill-redis oci://registry-1.docker.io/bitnamicharts/redis \
+		--namespace $(NAMESPACE) \
+		--set auth.enabled=false \
+		--set master.persistence.size=1Gi \
+		--wait --timeout=5m
+	@echo "✅ Redis deployed"
 
-helm-template: ## Show Helm template output
-	helm template bugdrill ./helm/bugdrill-api \
-		--values ./helm/bugdrill-api/values-dev.yaml
+k3d-init-db: ## Initialize database with migrations
+	@echo "📊 Initializing database..."
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@kubectl delete job bugdrill-migrations -n $(NAMESPACE) 2>/dev/null || true
+	@kubectl create configmap bugdrill-migrations -n $(NAMESPACE) \
+		--from-file=init-schema.sql=migrations/001_init_schema.sql \
+		--from-file=seed-data.sql=migrations/002_seed_data.sql \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@kubectl apply -f k3d-manifests/migrations.yaml
+	@kubectl wait --for=condition=complete job/bugdrill-migrations -n $(NAMESPACE) --timeout=120s
+	@echo "✅ Database initialized"
 
-# Functional tests
-test-functional-docker: ## Run functional tests in Docker Compose
-	@bash scripts/test-docker.sh
+k3d-deploy-executor: ## Deploy Executor
+	@echo "⚙️  Deploying Executor..."
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/executor.yaml
+	@kubectl wait --for=condition=ready pod -l app=bugdrill-executor -n $(NAMESPACE) --timeout=180s || true
+	@echo "✅ Executor deployed"
 
-test-functional: ## Quick test run (use after code changes)
-	@echo "🔨 Rebuilding test image..."
-	$(DOCKER_COMPOSE) build functional-tests
+k3d-deploy-api: ## Deploy API
+	@echo "🔧 Deploying API..."
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/api.yaml
+	@sleep 5
+	@kubectl wait --for=condition=ready pod -l app=bugdrill-api -n $(NAMESPACE) --timeout=300s
+	@echo "✅ API deployed"
+
+k3d-deploy-tests: ## Deploy and run functional tests
 	@echo "🧪 Running tests..."
-	$(DOCKER_COMPOSE) run --rm functional-tests
-	@echo "✅ Done!"
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@kubectl delete job bugdrill-tests -n $(NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/tests.yaml
+	@kubectl wait --for=condition=complete job/bugdrill-tests -n $(NAMESPACE) --timeout=300s
+	@kubectl logs -n $(NAMESPACE) job/bugdrill-tests
+	@echo "✅ Tests passed"
 
-test-functional-clean: ## Clean rebuild and run functional tests
-	@echo "🧹 Cleaning up..."
-	$(DOCKER_COMPOSE) down -v
-	@echo "🔨 Rebuilding test image..."
-	$(DOCKER_COMPOSE) build --no-cache functional-tests
-	@echo "🚀 Starting services..."
-	$(DOCKER_COMPOSE) up -d postgres redis dev
-	@echo "⏳ Waiting for API (this may take 30-60 seconds for first run)..."
-	@timeout=120; \
-	elapsed=0; \
-	while [ $$elapsed -lt $$timeout ]; do \
-		if curl -s http://localhost:8080/health > /dev/null 2>&1; then \
-			echo "✓ API is ready!"; \
-			sleep 5; \
-			break; \
-		fi; \
-		printf "."; \
-		sleep 3; \
-		elapsed=$$((elapsed + 3)); \
-		if [ $$elapsed -ge $$timeout ]; then \
-			echo "\n❌ API failed to start after $$timeout seconds"; \
-			$(DOCKER_COMPOSE) logs dev; \
-			exit 1; \
-		fi; \
-	done
-	@echo "\n🧪 Running tests..."
-	$(DOCKER_COMPOSE) run --rm functional-tests
-	@echo "✅ Done!"
+k3d-status: ## Show k3d cluster status
+	@echo "📊 Cluster Status"
+	@echo "═══════════════════════════════════════════════════"
+	@k3d cluster list | grep $(K3D_CLUSTER_NAME) || echo "Cluster not running"
+	@kubectl get nodes
+	@kubectl get pods -n $(NAMESPACE)
+	@kubectl get svc -n $(NAMESPACE)
 
-test-functional-k3d: ## Run functional tests in k3d
-	@bash scripts/test-k3d.sh
+k3d-logs-api: ## Follow API logs
+	@kubectl logs -f -n $(NAMESPACE) -l app=bugdrill-api --tail=50
 
-test-all: test test-functional-docker ## Run all tests (unit + functional)
+k3d-logs-executor: ## Follow Executor logs
+	@kubectl logs -f -n $(NAMESPACE) -l app=bugdrill-executor --tail=50
 
-# Database helpers
-db-check-patterns: ## Check if patterns are seeded in database
-	@echo "Checking pattern_categories table..."
-	docker exec -it bugdrill-postgres psql -U postgres -d bugdrill -c "SELECT id, name FROM pattern_categories ORDER BY id;"
+k3d-full-rebuild: ## Complete k3d rebuild: build images, destroy cluster, deploy all, run tests
+	@echo "═══════════════════════════════════════════════════"
+	@echo "🔨 FULL K3D REBUILD CYCLE"
+	@echo "═══════════════════════════════════════════════════"
+	@$(MAKE) docker-build-local
+	@$(MAKE) docker-push-local
+	@$(MAKE) k3d-destroy
+	@$(MAKE) k3d-create
+	@$(MAKE) k3d-deploy-postgres
+	@$(MAKE) k3d-deploy-redis
+	@$(MAKE) k3d-init-db
+	@$(MAKE) k3d-deploy-executor
+	@$(MAKE) k3d-deploy-api
+	@sleep 15
+	@$(MAKE) k3d-deploy-tests
+	@$(MAKE) k3d-status
+	@echo "═══════════════════════════════════════════════════"
+	@echo "✅ FULL REBUILD COMPLETE"
+	@echo "═══════════════════════════════════════════════════"
+	@echo "API: http://localhost:$(K3D_API_PORT)"
 
-db-shell: ## Open PostgreSQL shell
-	docker exec -it bugdrill-postgres psql -U postgres -d bugdrill
+k3d-runner-up: ## Start k3d runner container
+	@docker-compose -f docker-compose.k3d.yml up -d
+	@echo "✅ k3d runner ready. Use: docker exec -ti bugdrill-k3d-runner bash"
+	@echo "📱 Mobile app: Update config.ts to use http://localhost:8080/api/v1"
 
-# Development helpers
-dev: ## Start development environment with hot-reload
-	@echo "Starting development environment..."
-	$(DOCKER_COMPOSE) up dev
-	@echo "Development environment ready!"
-	@echo "API (hot-reload): http://localhost:8080"
-	@echo "PostgreSQL: localhost:5432"
-	@echo "Redis: localhost:6379"
-	@echo ""
-	@echo "Code changes will automatically reload the server"
+k3d-runner-down: ## Stop k3d runner container
+	@docker-compose -f docker-compose.k3d.yml down
 
-stop: docker-down ## Stop development environment
-
-restart: docker-down docker-up ## Restart development environment
-
-# CI/CD helpers
-ci-test: ## Run CI pipeline tests locally (simulates GitHub Actions)
-	@echo "🚀 Running CI pipeline tests locally..."
-	@echo ""
-	@echo "Step 1: Checking formatting..."
-	@if [ -n "$$(gofmt -l .)" ]; then \
-		echo "❌ Go files not formatted. Run: gofmt -w ."; \
+ec2-check-k3s: ## Check if k3s is installed
+	@if command -v k3s >/dev/null 2>&1; then \
+		echo "✅ k3s is installed"; \
+		k3s --version; \
+	else \
+		echo "❌ k3s is not installed"; \
 		exit 1; \
 	fi
-	@echo "✅ Formatting check passed"
-	@echo ""
-	@echo "Step 2: Running tests..."
-	@$(MAKE) test
-	@echo ""
-	@echo "Step 3: Generating coverage..."
-	@$(MAKE) test-coverage
-	@echo ""
-	@echo "Step 4: Running linter..."
-	@if command -v golangci-lint &> /dev/null; then \
-		golangci-lint run --timeout=5m || echo "⚠️  Linting completed with warnings"; \
+
+ec2-fix-kubeconfig: ## Fix kubectl permissions
+	@echo "🔧 Fixing kubeconfig..."
+	@sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+	@mkdir -p $$HOME/.kube
+	@sudo cp /etc/rancher/k3s/k3s.yaml $$HOME/.kube/config
+	@sudo chown $$USER:$$USER $$HOME/.kube/config
+	@echo "✅ Kubeconfig fixed"
+	@echo "Add to ~/.bashrc: export KUBECONFIG=~/.kube/config"
+
+ec2-install-k3s: ## Install k3s on EC2
+	@echo "📦 Installing k3s..."
+	@if command -v k3s >/dev/null 2>&1; then \
+		echo "⚠️  k3s already installed. Use 'make ec2-rebuild-k3s' to reinstall"; \
+		k3s --version; \
 	else \
-		echo "⚠️  golangci-lint not installed, skipping..."; \
+		curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644; \
+		sleep 10; \
+		sudo k3s kubectl wait --for=condition=ready node --all --timeout=60s; \
+		sudo chmod 644 /etc/rancher/k3s/k3s.yaml; \
+		mkdir -p $$HOME/.kube; \
+		sudo cp /etc/rancher/k3s/k3s.yaml $$HOME/.kube/config; \
+		sudo chown $$USER:$$USER $$HOME/.kube/config; \
+		echo "✅ k3s installed"; \
+		echo "Add to ~/.bashrc: export KUBECONFIG=~/.kube/config"; \
 	fi
-	@echo ""
-	@echo "✅ All CI tests passed! Ready to push."
 
-ci-build: ## Build Docker images (simulates GitHub Actions build)
-	@echo "🐳 Building Docker images..."
-	@echo ""
-	@echo "Building API image..."
-	@docker build -t bugdrill-api:ci-test -f Dockerfile .
-	@echo "✅ API image built"
-	@echo ""
-	@echo "Building Executor image..."
-	@docker build -t bugdrill-executor:ci-test -f executor/Dockerfile .
-	@echo "✅ Executor image built"
-	@echo ""
-	@docker images | grep bugdrill | grep ci-test
+ec2-uninstall-k3s: ## Uninstall k3s
+	@echo "🗑️  Uninstalling k3s..."
+	@if command -v k3s-uninstall.sh >/dev/null 2>&1; then \
+		sudo k3s-uninstall.sh; \
+		echo "✅ k3s uninstalled"; \
+	else \
+		echo "⚠️  k3s not installed"; \
+	fi
 
-ci-full: ci-test ci-build ## Run full CI pipeline locally (test + build)
-	@echo ""
+ec2-rebuild-k3s: ec2-uninstall-k3s ec2-install-k3s ## Rebuild k3s from scratch
+	@echo "✅ k3s rebuilt"
+
+ec2-clean-namespace: ## Clean bugdrill namespace
+	@echo "🧹 Cleaning namespace..."
+	@kubectl delete namespace $(EC2_NAMESPACE) --timeout=60s 2>/dev/null || true
+	@echo "✅ Namespace cleaned"
+
+ec2-deploy-postgres: ## Deploy PostgreSQL on EC2
+	@echo "🐘 Deploying PostgreSQL..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@helm upgrade --install bugdrill-postgres oci://registry-1.docker.io/bitnamicharts/postgresql \
+		--namespace $(EC2_NAMESPACE) \
+		--set auth.username=postgres \
+		--set auth.password=postgres \
+		--set auth.database=bugdrill \
+		--set primary.persistence.size=2Gi \
+		--wait --timeout=5m
+	@echo "✅ PostgreSQL deployed"
+
+ec2-deploy-redis: ## Deploy Redis on EC2
+	@echo "🔴 Deploying Redis..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@helm upgrade --install bugdrill-redis oci://registry-1.docker.io/bitnamicharts/redis \
+		--namespace $(EC2_NAMESPACE) \
+		--set auth.enabled=false \
+		--set master.persistence.size=2Gi \
+		--wait --timeout=5m
+	@echo "✅ Redis deployed"
+
+ec2-init-db: ## Initialize database on EC2
+	@echo "📊 Initializing database..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl delete job bugdrill-migrations -n $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl create configmap bugdrill-migrations -n $(EC2_NAMESPACE) \
+		--from-file=init-schema.sql=migrations/001_init_schema.sql \
+		--from-file=seed-data.sql=migrations/002_seed_data.sql \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@kubectl apply -f k3d-manifests/migrations.yaml
+	@kubectl wait --for=condition=complete job/bugdrill-migrations -n $(EC2_NAMESPACE) --timeout=120s
+	@echo "✅ Database initialized"
+
+ec2-deploy-executor: ## Deploy Executor on EC2
+	@echo "⚙️  Deploying Executor..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/executor.yaml
+	@kubectl wait --for=condition=ready pod -l app=bugdrill-executor -n $(EC2_NAMESPACE) --timeout=180s || true
+	@echo "✅ Executor deployed"
+
+ec2-deploy-api: ## Deploy API on EC2
+	@echo "🔧 Deploying API..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/api.yaml
+	@sleep 5
+	@kubectl wait --for=condition=ready pod -l app=bugdrill-api -n $(EC2_NAMESPACE) --timeout=300s
+	@echo "✅ API deployed"
+
+ec2-deploy-tests: ## Run functional tests on EC2
+	@echo "🧪 Running tests..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl delete job bugdrill-tests -n $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/tests.yaml
+	@kubectl wait --for=condition=complete job/bugdrill-tests -n $(EC2_NAMESPACE) --timeout=300s
+	@kubectl logs -n $(EC2_NAMESPACE) job/bugdrill-tests
+	@echo "✅ Tests passed"
+
+ec2-status: ## Show EC2 cluster status
+	@echo "📊 EC2 k3s Cluster Status"
 	@echo "═══════════════════════════════════════════════════"
-	@echo "✅ Full CI pipeline completed successfully!"
+	@kubectl get nodes
+	@kubectl get pods -n $(EC2_NAMESPACE)
+	@kubectl get svc -n $(EC2_NAMESPACE)
+
+ec2-full-deploy: ## Complete EC2 deployment
 	@echo "═══════════════════════════════════════════════════"
-	@echo ""
-	@echo "Next steps:"
-	@echo "  1. Review changes: git diff"
-	@echo "  2. Commit: git commit -m 'your message'"
-	@echo "  3. Push: git push origin your-branch"
+	@echo "🚀 EC2 PRODUCTION DEPLOYMENT"
+	@echo "═══════════════════════════════════════════════════"
+	@$(MAKE) ec2-clean-namespace
+	@$(MAKE) ec2-deploy-postgres
+	@$(MAKE) ec2-deploy-redis
+	@$(MAKE) ec2-init-db
+	@$(MAKE) ec2-deploy-executor
+	@$(MAKE) ec2-deploy-api
+	@sleep 15
+	@$(MAKE) ec2-deploy-tests
+	@$(MAKE) ec2-status
+	@echo "═══════════════════════════════════════════════════"
+	@echo "✅ EC2 DEPLOYMENT COMPLETE"
+	@echo "═══════════════════════════════════════════════════"
+
+ec2-full-rebuild: ## Complete rebuild: k3s + full deployment
+	@echo "═══════════════════════════════════════════════════"
+	@echo "🔨 COMPLETE EC2 REBUILD"
+	@echo "═══════════════════════════════════════════════════"
+	@$(MAKE) ec2-rebuild-k3s
+	@$(MAKE) ec2-full-deploy
+	@echo "═══════════════════════════════════════════════════"
+	@echo "✅ COMPLETE REBUILD FINISHED"
+	@echo "═══════════════════════════════════════════════════"

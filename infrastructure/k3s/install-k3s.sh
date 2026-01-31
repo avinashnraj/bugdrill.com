@@ -46,22 +46,11 @@ if [ ! -f /swapfile ]; then
     sudo sysctl -p
 fi
 
-# Format and mount EBS volume for PostgreSQL data
+# Create PostgreSQL data directory on root volume
 echo "Setting up PostgreSQL data volume..."
-if ! sudo blkid /dev/nvme1n1; then
-    echo "Formatting EBS volume..."
-    sudo mkfs.ext4 /dev/nvme1n1
-fi
-
 sudo mkdir -p /mnt/postgres-data
-
-# Add to fstab if not already there
-if ! grep -q "/mnt/postgres-data" /etc/fstab; then
-    echo '/dev/nvme1n1 /mnt/postgres-data ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
-fi
-
-sudo mount -a
 sudo chown -R 999:999 /mnt/postgres-data  # PostgreSQL container UID/GID
+echo "PostgreSQL data directory created at /mnt/postgres-data"
 
 # Install K3s
 echo "Installing K3s..."

@@ -92,7 +92,7 @@ func (s *SnippetService) GetSnippet(snippetID string) (*model.Snippet, error) {
 
 func (s *SnippetService) ExecuteCode(snippetID, code, language string) (*model.ExecuteCodeResponse, error) {
 	log.Printf("🔵 ExecuteCode called: snippetID=%s, codeLength=%d, language=%s", snippetID, len(code), language)
-	
+
 	// Get snippet to access test cases
 	snippet, err := s.GetSnippet(snippetID)
 	if err != nil {
@@ -101,7 +101,7 @@ func (s *SnippetService) ExecuteCode(snippetID, code, language string) (*model.E
 	}
 
 	log.Printf("🔵 Snippet retrieved, calling executor service...")
-	
+
 	// Execute code using executor service
 	execReq := ExecuteRequest{
 		Code:       code,
@@ -114,13 +114,13 @@ func (s *SnippetService) ExecuteCode(snippetID, code, language string) (*model.E
 		log.Printf("❌ Executor service failed: %v", err)
 		return nil, fmt.Errorf("execution failed: %w", err)
 	}
-	
+
 	log.Printf("✅ Executor returned: success=%v, exitCode=%d", execResp.Success, execResp.ExitCode)
 
 	// Build test results by running each test case
 	testResults := []model.TestResult{}
 	allPassed := true
-	
+
 	if !execResp.Success || execResp.ExitCode != 0 {
 		// Code failed to compile/run, all test cases fail
 		for i, tc := range snippet.TestCases {
@@ -137,24 +137,24 @@ func (s *SnippetService) ExecuteCode(snippetID, code, language string) (*model.E
 	} else {
 		// Code ran successfully, extract function name and run each test case
 		funcName := extractFunctionName(code, language)
-		
+
 		for i, tc := range snippet.TestCases {
 			// Build test harness code that calls the function with test input
 			testCode := buildPythonTestHarness(code, funcName, tc.Input)
 			log.Printf("[TEST] Test case %d: funcName=%s", i+1, funcName)
 			log.Printf("[CODE] Generated test code:\n%s", testCode)
-			
+
 			testExecReq := ExecuteRequest{
 				Code:       testCode,
 				Language:   language,
 				TimeoutSec: 10,
 			}
-			
+
 			testResp, err := s.executorService.Execute(testExecReq)
-			
+
 			var actualOutput interface{}
 			var passed bool
-			
+
 			if err != nil || !testResp.Success {
 				// Test case execution failed
 				passed = false
@@ -175,7 +175,7 @@ func (s *SnippetService) ExecuteCode(snippetID, code, language string) (*model.E
 				passed = compareOutputs(expectedStr, actualStr)
 				log.Printf("[RESULT] Test case %d: expected='%s', actual='%s', passed=%v", i+1, expectedStr, actualStr, passed)
 			}
-			
+
 			testResults = append(testResults, model.TestResult{
 				TestCase:        i + 1,
 				Input:           tc.Input,
@@ -184,7 +184,7 @@ func (s *SnippetService) ExecuteCode(snippetID, code, language string) (*model.E
 				Passed:          passed,
 				ExecutionTimeMS: testResp.ExecutionTime,
 			})
-			
+
 			if !passed {
 				allPassed = false
 			}
@@ -215,7 +215,7 @@ func extractFunctionName(code, language string) string {
 	if language != "python" {
 		return ""
 	}
-	
+
 	// Look for "def functionName(" pattern
 	lines := strings.Split(code, "\n")
 	for _, line := range lines {
@@ -240,7 +240,7 @@ func buildPythonTestHarness(userCode, funcName string, testInput interface{}) st
 	if !ok {
 		return userCode + "\nprint('Error: invalid test input')"
 	}
-	
+
 	// Build function call arguments in order
 	// For now, hardcode common parameter order (nums, target)
 	// TODO: Make this more generic by parsing function signature
@@ -255,7 +255,7 @@ func buildPythonTestHarness(userCode, funcName string, testInput interface{}) st
 	if s, ok := inputMap["s"]; ok {
 		args = append(args, formatPythonValue(s))
 	}
-	
+
 	// Create test harness
 	harness := fmt.Sprintf(`%s
 
@@ -264,7 +264,7 @@ import json
 result = %s(%s)
 print(json.dumps(result))
 `, userCode, funcName, strings.Join(args, ", "))
-	
+
 	return harness
 }
 
@@ -295,25 +295,24 @@ func compareOutputs(expected, actual string) bool {
 	// Normalize whitespace
 	expected = strings.TrimSpace(expected)
 	actual = strings.TrimSpace(actual)
-	
+
 	// Try exact match first
 	if expected == actual {
 		return true
 	}
-	
+
 	// Try JSON comparison (for lists, dicts, etc.)
 	// Both expected and actual should be JSON strings
 	var expectedJSON, actualJSON interface{}
 	err1 := json.Unmarshal([]byte(actual), &actualJSON)
 	err2 := json.Unmarshal([]byte(expected), &expectedJSON)
-	
+
 	if err1 == nil && err2 == nil {
 		// Compare the unmarshaled objects
 		expectedBytes, _ := json.Marshal(expectedJSON)
 		actualBytes, _ := json.Marshal(actualJSON)
 		return string(expectedBytes) == string(actualBytes)
 	}
-	
+
 	return false
 }
-

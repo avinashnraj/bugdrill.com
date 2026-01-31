@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bugdrill-executor
+  namespace: bugdrill
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bugdrill-executor
+  template:
+    metadata:
+      labels:
+        app: bugdrill-executor
+    spec:
+      containers:
+      - name: bugdrill-executor
+        image: smithaavinash/bugdrill-executor:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8081
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bugdrill-executor
+  namespace: bugdrill
+spec:
+  selector:
+    app: bugdrill-executor
+  ports:
+  - port: 8081
+    targetPort: 8081
+  type: ClusterIP

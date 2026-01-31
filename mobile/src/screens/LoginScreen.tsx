@@ -1,21 +1,27 @@
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
+import { 
+  View, 
+  TextInput, 
+  StyleSheet, 
+  Text, 
+  TouchableOpacity, 
   KeyboardAvoidingView,
   Platform,
-  Alert,
+  ScrollView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../stores/authStore';
+import Button from '../components/Button';
+import { colors, spacing, fontSize, fontWeight, borderRadius, shadows } from '../constants/theme';
 
 export default function LoginScreen({ navigation }: any) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { login, isLoading, error, clearError } = useAuthStore();
+  const [showPassword, setShowPassword] = useState(false);
+  const { login, isLoading, error } = useAuthStore();
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -25,129 +31,224 @@ export default function LoginScreen({ navigation }: any) {
 
     try {
       await login(email, password);
-      // Navigation will be handled by App.tsx based on auth state
     } catch (err) {
       Alert.alert('Login Failed', error || 'Please check your credentials');
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <LinearGradient
+      colors={[colors.primary, colors.primaryDark, '#2D3748']}
+      style={styles.gradient}
     >
-      <View style={styles.content}>
-        <Text style={styles.title}>bugdrill</Text>
-        <Text style={styles.subtitle}>Learn patterns by fixing bugs</Text>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.container}
+      >
+        <ScrollView 
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Logo/Icon */}
+          <View style={styles.logoContainer}>
+            <View style={styles.logoCircle}>
+              <Ionicons name="bug" size={64} color={colors.white} />
+            </View>
+            <Text style={styles.appName}>BugDrill</Text>
+            <Text style={styles.subtitle}>Master Debugging Skills</Text>
+          </View>
 
-        <View style={styles.form}>
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            editable={!isLoading}
-          />
+          {/* Login Form */}
+          <View style={styles.formContainer}>
+            <Text style={styles.title}>Welcome Back!</Text>
+            <Text style={styles.description}>Sign in to continue your learning journey</Text>
 
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            editable={!isLoading}
-          />
+            {error ? (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle" size={20} color={colors.errorDark} />
+                <Text style={styles.error}>{error}</Text>
+              </View>
+            ) : null}
 
-          <TouchableOpacity
-            style={[styles.button, isLoading && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Login</Text>
-            )}
-          </TouchableOpacity>
+            <View style={styles.inputContainer}>
+              <Ionicons name="mail-outline" size={20} color={colors.gray400} style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                placeholder="Email"
+                placeholderTextColor={colors.gray400}
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                editable={!isLoading}
+              />
+            </View>
 
-          <TouchableOpacity
-            style={styles.linkButton}
-            onPress={() => navigation.navigate('Signup')}
-            disabled={isLoading}
-          >
-            <Text style={styles.linkText}>
-              Don't have an account? <Text style={styles.linkTextBold}>Sign up</Text>
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </KeyboardAvoidingView>
+            <View style={styles.inputContainer}>
+              <Ionicons name="lock-closed-outline" size={20} color={colors.gray400} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                placeholder="Password"
+                placeholderTextColor={colors.gray400}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                editable={!isLoading}
+              />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                <Ionicons 
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'} 
+                  size={20} 
+                  color={colors.gray400} 
+                />
+              </TouchableOpacity>
+            </View>
+
+            <Button
+              title="Sign In"
+              onPress={handleLogin}
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={isLoading}
+              style={styles.loginButton}
+            />
+
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <TouchableOpacity 
+              onPress={() => navigation.navigate('Signup')}
+              disabled={isLoading}
+            >
+              <Text style={styles.signupText}>
+                Don't have an account? 
+                <Text style={styles.signupLink}> Sign up</Text>
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
+  gradient: {
+    flex: 1,
+  },
   container: {
     flex: 1,
-    backgroundColor: '#fff',
   },
-  content: {
-    flex: 1,
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
-    padding: 24,
+    padding: spacing.lg,
   },
-  title: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#000',
-    textAlign: 'center',
-    marginBottom: 8,
+  logoContainer: {
+    alignItems: 'center',
+    marginBottom: spacing.xxl,
+  },
+  logoCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+    ...shadows.xl,
+  },
+  appName: {
+    fontSize: fontSize.xxxl,
+    fontWeight: fontWeight.bold,
+    color: colors.white,
+    marginBottom: spacing.xs,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 48,
+    fontSize: fontSize.md,
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontWeight: fontWeight.medium,
   },
-  form: {
-    gap: 16,
+  formContainer: {
+    backgroundColor: colors.white,
+    borderRadius: borderRadius.xl,
+    padding: spacing.xl,
+    ...shadows.xl,
+  },
+  title: {
+    fontSize: fontSize.xxl,
+    fontWeight: fontWeight.bold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  description: {
+    fontSize: fontSize.md,
+    color: colors.textSecondary,
+    marginBottom: spacing.xl,
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.errorLight,
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  error: {
+    color: colors.errorDark,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+    flex: 1,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.gray50,
+    borderRadius: borderRadius.lg,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.gray200,
+  },
+  inputIcon: {
+    marginRight: spacing.sm,
   },
   input: {
-    height: 50,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    backgroundColor: '#f9f9f9',
+    flex: 1,
+    paddingVertical: spacing.md,
+    fontSize: fontSize.md,
+    color: colors.textPrimary,
   },
-  button: {
-    height: 50,
-    backgroundColor: '#000',
-    borderRadius: 8,
-    justifyContent: 'center',
+  loginButton: {
+    marginTop: spacing.md,
+  },
+  divider: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
+    marginVertical: spacing.lg,
   },
-  buttonDisabled: {
-    backgroundColor: '#999',
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.gray200,
   },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+  dividerText: {
+    marginHorizontal: spacing.md,
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
   },
-  linkButton: {
-    marginTop: 16,
-    alignItems: 'center',
+  signupText: {
+    textAlign: 'center',
+    color: colors.textSecondary,
+    fontSize: fontSize.md,
   },
-  linkText: {
-    color: '#666',
-    fontSize: 14,
-  },
-  linkTextBold: {
-    color: '#000',
-    fontWeight: '600',
+  signupLink: {
+    color: colors.primary,
+    fontWeight: fontWeight.semibold,
   },
 });

@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  k3d-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.k3d
+    container_name: bugdrill-k3d-runner
+    privileged: true
+    ports:
+      - "8080:80"    # HTTP ingress for mobile app
+      - "8443:443"   # HTTPS ingress (for future SSL)
+    volumes:
+      - ./:/workspace
+      - k3d-data:/var/lib/docker
+    environment:
+      - DOCKER_TLS_CERTDIR=/certs
+      - DOCKER_USERNAME=${DOCKER_USERNAME:-smithaavinash}
+      - DOCKER_TAG=${DOCKER_TAG:-latest}
+    working_dir: /workspace
+    networks:
+      - bugdrill-k3d-net
+
+volumes:
+  k3d-data:
+
+networks:
+  bugdrill-k3d-net:
+    driver: bridge
