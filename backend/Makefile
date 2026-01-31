@@ -579,6 +579,41 @@ production-build-push: docker-buildx-setup ## Build and push ARM64 images for EC
 EC2_NAMESPACE ?= bugdrill
 EC2_API_PORT ?= 8080
 
+ec2-check-k3s: ## Check if k3s is installed
+	@if command -v k3s >/dev/null 2>&1; then \
+		echo "✅ k3s is installed"; \
+		k3s --version; \
+	else \
+		echo "❌ k3s is not installed"; \
+		exit 1; \
+	fi
+
+ec2-install-k3s: ## Install k3s on EC2
+	@echo "📦 Installing k3s..."
+	@if command -v k3s >/dev/null 2>&1; then \
+		echo "⚠️  k3s is already installed. Use 'make ec2-rebuild-k3s' to reinstall."; \
+		k3s --version; \
+	else \
+		curl -sfL https://get.k3s.io | sh -; \
+		echo "⏳ Waiting for k3s to be ready..."; \
+		sleep 10; \
+		sudo k3s kubectl wait --for=condition=ready node --all --timeout=60s; \
+		echo "✅ k3s installed successfully"; \
+		k3s --version; \
+	fi
+
+ec2-uninstall-k3s: ## Uninstall k3s completely
+	@echo "🗑️  Uninstalling k3s..."
+	@if command -v k3s-uninstall.sh >/dev/null 2>&1; then \
+		sudo k3s-uninstall.sh; \
+		echo "✅ k3s uninstalled successfully"; \
+	else \
+		echo "⚠️  k3s uninstall script not found (k3s may not be installed)"; \
+	fi
+
+ec2-rebuild-k3s: ec2-uninstall-k3s ec2-install-k3s ## Rebuild k3s from scratch (uninstall + install)
+	@echo "✅ k3s rebuilt from scratch"
+
 ec2-clean-namespace: ## Clean up EC2 namespace for fresh deployment
 	@echo "🧹 Cleaning up $(EC2_NAMESPACE) namespace..."
 	@kubectl delete namespace $(EC2_NAMESPACE) --timeout=60s 2>/dev/null || true
@@ -721,6 +756,28 @@ ec2-full-deploy: ## Complete EC2 deployment: clean -> deploy all -> run tests
 	@echo "  make ec2-status          - Check cluster status"
 	@echo "  kubectl get pods -n $(EC2_NAMESPACE)"
 	@echo "  kubectl logs -n $(EC2_NAMESPACE) -l app=bugdrill-api"
+
+ec2-full-rebuild: ## Complete rebuild from scratch: k3s + full deployment
+	@echo "═══════════════════════════════════════════════════"
+	@echo "🔨 COMPLETE EC2 REBUILD FROM SCRATCH"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo "⚠️  WARNING: This will uninstall and reinstall k3s!"
+	@echo ""
+	@echo "Step 1: Rebuilding k3s from scratch..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) ec2-rebuild-k3s
+	@echo ""
+	@echo "Step 2: Deploying full stack..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) ec2-full-deploy
+	@echo ""
+	@echo "═══════════════════════════════════════════════════"
+	@echo "✅ COMPLETE REBUILD FINISHED!"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo "🎯 k3s + Full stack deployed and tested"
+	@echo "🌐 API endpoint: http://<ec2-public-ip>:$(EC2_API_PORT)"
 
 docker-login: ## Login to Docker Hub
 	docker login
