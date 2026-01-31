@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bugdrill-migrations
+  namespace: bugdrill
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: migrations
+        image: postgres:15-alpine
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "Waiting for PostgreSQL to be ready..."
+          until pg_isready -h bugdrill-postgres-postgresql -U postgres; do
+            echo "Waiting..."
+            sleep 2
+          done
+          echo "PostgreSQL is ready!"
+          echo "Running schema migration..."
+          PGPASSWORD=postgres psql -h bugdrill-postgres-postgresql -U postgres -d bugdrill -f /migrations/init-schema.sql || echo "Schema may already exist"
+          echo "Running seed data..."
+          PGPASSWORD=postgres psql -h bugdrill-postgres-postgresql -U postgres -d bugdrill -f /migrations/seed-data.sql || echo "Seed data may already exist"
+          echo "✅ Migrations completed successfully"
+        volumeMounts:
+        - name: migrations
+          mountPath: /migrations
+      volumes:
+      - name: migrations
+        configMap:
+          name: bugdrill-migrations

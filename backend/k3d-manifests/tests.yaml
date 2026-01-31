@@ -1,0 +1,26 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bugdrill-tests
+  namespace: bugdrill
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: tests
+        image: smithaavinash/bugdrill-tests:latest
+        imagePullPolicy: Always
+        env:
+        - name: API_BASE_URL
+          value: "http://bugdrill-api:8080"
+        workingDir: /app/tests
+        command: ["go", "test", "-v"]
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

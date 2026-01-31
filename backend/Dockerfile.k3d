@@ -1,0 +1,35 @@
+# Dockerfile for k3d testing environment
+# This container has k3d, kubectl, helm, and Docker-in-Docker
+FROM docker:26-dind
+
+# Install dependencies
+RUN apk add --no-cache \
+    bash \
+    curl \
+    git \
+    make \
+    go \
+    wget \
+    tar \
+    gzip
+
+# Install kubectl
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
+    chmod +x kubectl && \
+    mv kubectl /usr/local/bin/
+
+# Install k3d
+RUN curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+
+# Install helm
+RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# Set working directory
+WORKDIR /workspace
+
+# Copy entrypoint script
+COPY docker-entrypoint-k3d.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint-k3d.sh
+
+ENTRYPOINT ["docker-entrypoint-k3d.sh"]
+CMD ["sleep", "infinity"]

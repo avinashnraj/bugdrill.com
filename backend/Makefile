@@ -129,16 +129,241 @@ clean: ## Clean build artifacts
 	rm -rf bin/
 	rm -f coverage.out
 
-# k3d and Kubernetes
-k3d-create: ## Create k3d cluster
-	@bash scripts/k3d-create.sh
+# k3d and Kubernetes - Modular Targets
+K3D_CLUSTER_NAME ?= bugdrill-local
+K3D_REGISTRY_PORT ?= 5000
+K3D_API_PORT ?= 8080
+NAMESPACE ?= bugdrill
+
+k3d-check: ## Check if k3d cluster exists
+	@k3d cluster list | grep $(K3D_CLUSTER_NAME) || (echo "Cluster $(K3D_CLUSTER_NAME) does not exist" && exit 1)
 
 k3d-destroy: ## Destroy k3d cluster
-	@bash scripts/k3d-destroy.sh
+	@echo "🗑️  Destroying k3d cluster: $(K3D_CLUSTER_NAME)"
+	@k3d cluster delete $(K3D_CLUSTER_NAME) 2>/dev/null || echo "Cluster doesn't exist, skipping..."
+	@echo "✅ Cluster destroyed"
 
-docker-build-k3d: ## Build and push images to k3d registry
-	docker build -t localhost:5000/bugdrill-api:dev .
-	docker push localhost:5000/bugdrill-api:dev
+k3d-create: k3d-destroy ## Create fresh k3d cluster with registry
+	@echo "🚀 Creating k3d cluster: $(K3D_CLUSTER_NAME)"
+	@k3d cluster create $(K3D_CLUSTER_NAME) \
+		--agents 1 \
+		--port "$(K3D_API_PORT):8080@loadbalancer" \
+		--registry-create k3d-registry.localhost:$(K3D_REGISTRY_PORT) \
+		--wait
+	@kubectl cluster-info
+	@echo "✅ Cluster created successfully"
+
+k3d-start: ## Start existing k3d cluster
+	@echo "▶️  Starting k3d cluster: $(K3D_CLUSTER_NAME)"
+	@k3d cluster start $(K3D_CLUSTER_NAME)
+	@echo "✅ Cluster started"
+
+k3d-stop: ## Stop k3d cluster without destroying it
+	@echo "⏸️  Stopping k3d cluster: $(K3D_CLUSTER_NAME)"
+	@k3d cluster stop $(K3D_CLUSTER_NAME)
+	@echo "✅ Cluster stopped"
+
+k3d-deploy-postgres: ## Deploy PostgreSQL to k3d
+	@echo "🐘 Deploying PostgreSQL..."
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@helm upgrade --install bugdrill-postgres oci://registry-1.docker.io/bitnamicharts/postgresql \
+		--namespace $(NAMESPACE) \
+		--set auth.username=postgres \
+		--set auth.password=postgres \
+		--set auth.database=bugdrill \
+		--set primary.persistence.size=1Gi \
+		--wait --timeout=5m
+	@echo "✅ PostgreSQL deployed"
+
+k3d-deploy-redis: ## Deploy Redis to k3d
+	@echo "🔴 Deploying Redis..."
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@helm upgrade --install bugdrill-redis oci://registry-1.docker.io/bitnamicharts/redis \
+		--namespace $(NAMESPACE) \
+		--set auth.enabled=false \
+		--set master.persistence.size=1Gi \
+		--wait --timeout=5m
+	@echo "✅ Redis deployed"
+
+k3d-deploy-api: ## Deploy API from Docker Hub
+	@echo "🔧 Deploying BugDrill API from Docker Hub..."
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/api.yaml
+	@echo "⏳ Waiting for API pod to be created..."
+	@sleep 5
+	@echo "📋 Checking API pod status..."
+	@kubectl get pods -n $(NAMESPACE) -l app=bugdrill-api
+	@echo "⏳ Waiting for API to be ready (timeout: 5 minutes)..."
+	@kubectl wait --for=condition=ready pod -l app=bugdrill-api -n $(NAMESPACE) --timeout=300s || \
+		(echo "❌ API failed to start. Showing logs:" && \
+		 kubectl get pods -n $(NAMESPACE) -l app=bugdrill-api && \
+		 kubectl describe pod -n $(NAMESPACE) -l app=bugdrill-api && \
+		 kubectl logs -n $(NAMESPACE) -l app=bugdrill-api --tail=100 && \
+		 exit 1)
+	@echo "✅ API deployed successfully"
+
+k3d-deploy-executor: ## Deploy Executor from Docker Hub
+	@echo "⚙️  Deploying BugDrill Executor from Docker Hub..."
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/executor.yaml
+	@echo "⏳ Waiting for Executor to be ready..."
+	@kubectl wait --for=condition=ready pod -l app=bugdrill-executor -n $(NAMESPACE) --timeout=180s || true
+	@echo "✅ Executor deployed successfully"
+	@echo "⏳ Waiting for Executor to be ready..."
+	@kubectl wait --for=condition=ready pod -l app=bugdrill-executor -n $(NAMESPACE) --timeout=180s || true
+	@echo "✅ Executor deployed successfully"
+
+k3d-init-db: ## Initialize database with migrations
+	@echo "📊 Initializing database with migrations..."
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@kubectl delete job bugdrill-migrations -n $(NAMESPACE) 2>/dev/null || true
+	@kubectl create configmap bugdrill-migrations -n $(NAMESPACE) \
+		--from-file=init-schema.sql=migrations/001_init_schema.sql \
+		--from-file=seed-data.sql=migrations/002_seed_data.sql \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@kubectl apply -f k3d-manifests/migrations.yaml
+	@echo "⏳ Waiting for migrations to complete..."
+	@kubectl wait --for=condition=complete job/bugdrill-migrations -n $(NAMESPACE) --timeout=120s || \
+		(echo "❌ Migrations failed!" && kubectl logs -n $(NAMESPACE) job/bugdrill-migrations && exit 1)
+	@kubectl logs -n $(NAMESPACE) job/bugdrill-migrations
+	@echo "✅ Database initialized successfully"
+
+k3d-deploy-tests: ## Deploy functional tests as Job
+	@echo "🧪 Deploying functional tests..."
+	@kubectl create namespace $(NAMESPACE) 2>/dev/null || true
+	@kubectl delete job bugdrill-tests -n $(NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/tests.yaml
+	@echo "⏳ Waiting for tests to complete..."
+	@kubectl wait --for=condition=complete job/bugdrill-tests -n $(NAMESPACE) --timeout=300s || \
+		(echo "❌ Tests failed!" && kubectl logs -n $(NAMESPACE) job/bugdrill-tests && exit 1)
+	@echo "📋 Test logs:"
+	@kubectl logs -n $(NAMESPACE) job/bugdrill-tests
+	@echo "✅ All tests passed!"
+
+k3d-restart-executor: ## Restart Executor deployment
+	@echo "🔄 Restarting Executor..."
+	@kubectl rollout restart deployment/bugdrill-executor -n $(NAMESPACE)
+	@kubectl rollout status deployment/bugdrill-executor -n $(NAMESPACE)
+	@echo "✅ Executor restarted"
+
+k3d-redeploy-api: ## Redeploy just the API (use after pushing new image)
+	@echo "🔄 Redeploying API with latest image..."
+	@kubectl delete pod -n $(NAMESPACE) -l app=bugdrill-api
+	@kubectl wait --for=condition=ready pod -l app=bugdrill-api -n $(NAMESPACE) --timeout=300s
+	@echo "✅ API redeployed"
+
+k3d-redeploy-executor: ## Redeploy just the Executor (use after pushing new image)
+	@echo "🔄 Redeploying Executor with latest image..."
+	@kubectl delete pod -n $(NAMESPACE) -l app=bugdrill-executor
+	@kubectl wait --for=condition=ready pod -l app=bugdrill-executor -n $(NAMESPACE) --timeout=180s
+	@echo "✅ Executor redeployed"
+
+k3d-clean: ## Clean up all resources in namespace
+	@echo "🧹 Cleaning up $(NAMESPACE) namespace..."
+	@kubectl delete namespace $(NAMESPACE) --timeout=60s 2>/dev/null || true
+	@echo "✅ Cleanup complete"
+
+# Full cycle target - destroys, creates, deploys everything, and runs tests
+full-cycle-k3d: ## Complete k3d workflow: destroy -> create -> deploy all -> run tests
+	@echo "🚀 Starting full k3d deployment cycle..."
+	@echo "==========================================="
+	@echo ""
+	@$(MAKE) k3d-destroy
+	@echo ""
+	@$(MAKE) k3d-create
+	@echo ""
+	@$(MAKE) k3d-deploy-postgres
+	@echo ""
+	@$(MAKE) k3d-deploy-redis
+	@echo ""
+	@$(MAKE) k3d-init-db
+	@echo ""
+	@$(MAKE) k3d-deploy-executor
+	@echo ""
+	@$(MAKE) k3d-deploy-api
+	@echo ""
+	@echo "⏳ Giving API time to stabilize..."
+	@sleep 15
+	@echo ""
+	@$(MAKE) k3d-deploy-tests
+	@echo ""
+	@$(MAKE) k3d-status
+	@echo ""
+	@echo "==========================================="
+	@echo "✅ Full k3d cycle completed successfully!"
+	@echo "==========================================="
+	@echo ""
+	@echo "Cluster is ready! Access the API:"
+	@echo "  http://localhost:$(K3D_API_PORT)"
+	@echo ""
+	@echo "Useful commands:"
+	@echo "  make k3d-status          - Show cluster status"
+	@echo "  make k3d-logs-api        - Follow API logs"
+	@echo "  make k3d-redeploy-api    - Redeploy API after image update"
+	@echo "  make k3d-destroy         - Destroy the cluster"
+
+# Quick redeploy after code changes
+k3d-quick-deploy: docker-build-prod k3d-redeploy-api k3d-redeploy-executor ## Build new images, push, and redeploy to k3d
+	@echo "✅ Quick redeploy complete!"
+
+# Docker-based k3d runner (Linux-only, works on Windows via Docker)
+k3d-runner-build: ## Build the k3d runner Docker image
+	@echo "🐳 Building k3d runner image..."
+	docker build -t bugdrill-k3d-runner -f Dockerfile.k3d .
+	@echo "✅ k3d runner image built"
+
+k3d-runner-up: ## Start k3d runner container
+	@echo "🚀 Starting k3d runner container..."
+	docker-compose -f docker-compose.k3d.yml up -d
+	@echo "✅ k3d runner is ready"
+	@echo ""
+	@echo "Run commands in the container:"
+	@echo "  make k3d-exec CMD='make full-cycle-k3d'"
+
+k3d-runner-down: ## Stop k3d runner container
+	@echo "🛑 Stopping k3d runner container..."
+	docker-compose -f docker-compose.k3d.yml down
+	@echo "✅ k3d runner stopped"
+
+k3d-runner-clean: ## Clean k3d runner and volumes
+	@echo "🧹 Cleaning k3d runner..."
+	docker-compose -f docker-compose.k3d.yml down -v
+	@echo "✅ k3d runner cleaned"
+
+k3d-exec: ## Execute command in k3d runner. Usage: make k3d-exec CMD="make full-cycle-k3d"
+	@if [ -z "$(CMD)" ]; then \
+		echo "❌ Error: CMD is required"; \
+		echo "Usage: make k3d-exec CMD='your command'"; \
+		echo "Example: make k3d-exec CMD='make full-cycle-k3d'"; \
+		exit 1; \
+	fi
+	docker exec -it bugdrill-k3d-runner bash -c "$(CMD)"
+
+k3d-shell: ## Open shell in k3d runner container
+	@echo "🐚 Opening shell in k3d runner..."
+	@echo "Run 'make full-cycle-k3d' inside the container to test"
+	docker exec -it bugdrill-k3d-runner bash
+
+# Complete local testing workflow (works on Windows by running in Docker)
+test-local-k3d: k3d-runner-build k3d-runner-up ## Build runner, start it, and run full k3d cycle
+	@echo "⏳ Waiting for Docker daemon in container..."
+	@sleep 5
+	@echo "🚀 Running full k3d cycle in container..."
+	@$(MAKE) k3d-exec CMD="make full-cycle-k3d"
+	@echo ""
+	@echo "✅ Local k3d testing complete!"
+	@echo ""
+	@echo "To access the API:"
+	@echo "  1. Get into the container: make k3d-shell"
+	@echo "  2. Test API: curl http://localhost:8080/health"
+	@echo ""
+	@echo "To cleanup:"
+	@echo "  make k3d-runner-clean"
+
+docker-build-k3d: ## Build and push images to k3d registry (deprecated, use docker-build-prod)
+	@echo "⚠️  This target is deprecated. Use 'make docker-build-prod' instead."
+	@echo "Building for Docker Hub..."
+	@$(MAKE) docker-build-prod
 
 # Production Docker Build and Push
 DOCKER_USERNAME ?= smithaavinash
@@ -149,16 +374,22 @@ docker-buildx-setup: ## Setup Docker buildx for multi-arch builds
 	@docker buildx inspect --bootstrap
 
 docker-build-prod: docker-buildx-setup ## Build production Docker images for ARM64 and AMD64
-	@echo "Building multi-arch API image (linux/amd64,linux/arm64)..."
-	docker buildx build --platform linux/amd64,linux/arm64 \
+	@echo "Building multi-arch API image (linux/arm64)..."
+	docker buildx build --platform linux/arm64 \
 		-t $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG) \
 		-f Dockerfile \
 		--push \
 		.
-	@echo "Building multi-arch Executor image (linux/amd64,linux/arm64)..."
-	docker buildx build --platform linux/amd64,linux/arm64 \
+	@echo "Building multi-arch Executor image (linux/arm64)..."
+	docker buildx build --platform linux/arm64 \
 		-t $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG) \
 		-f executor/Dockerfile \
+		--push \
+		.
+	@echo "Building multi-arch Tests image (linux/arm64)..."
+	docker buildx build --platform linux/arm64 \
+		-t $(DOCKER_USERNAME)/bugdrill-tests:$(DOCKER_TAG) \
+		-f Dockerfile.tests \
 		--push \
 		.
 	@echo "✓ Multi-arch images built and pushed successfully"

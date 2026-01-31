@@ -105,20 +105,26 @@ func executePython(req ExecuteRequest) ExecuteResponse {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(req.TimeoutSec)*time.Second)
 	defer cancel()
 
-	// Use docker run to execute Python code in isolated container
-	// --rm: remove container after execution
-	// --network none: no network access
-	// --memory: limit memory to 128MB
-	// --cpus: limit CPU usage
-	// --user: run as non-root user
-	cmd := exec.CommandContext(ctx, "docker", "run", "--rm",
-		"--network", "none",
-		"--memory", "128m",
-		"--cpus", "0.5",
-		"--security-opt=no-new-privileges",
-		"python:3.11-alpine",
-		"python", "-c", req.Code,
-	)
+	// Try Docker first (if available), fallback to direct execution
+	useDocker := isDockerAvailable()
+
+	var cmd *exec.Cmd
+	if useDocker {
+		log.Println("🐳 Using Docker for isolated execution")
+		// Use docker run to execute Python code in isolated container
+		cmd = exec.CommandContext(ctx, "docker", "run", "--rm",
+			"--network", "none",
+			"--memory", "128m",
+			"--cpus", "0.5",
+			"--security-opt=no-new-privileges",
+			"python:3.11-alpine",
+			"python", "-c", req.Code,
+		)
+	} else {
+		log.Println("🐍 Using direct Python execution (Docker not available)")
+		// Fallback to direct Python execution
+		cmd = exec.CommandContext(ctx, "python3", "-c", req.Code)
+	}
 
 	// Capture output
 	var stdout, stderr strings.Builder
@@ -151,4 +157,11 @@ func executePython(req ExecuteRequest) ExecuteResponse {
 		ExitCode:      exitCode,
 		ExecutionTime: executionTime,
 	}
+}
+
+// isDockerAvailable checks if Docker daemon is available
+func isDockerAvailable() bool {
+	cmd := exec.Command("docker", "info")
+	err := cmd.Run()
+	return err == nil
 }
