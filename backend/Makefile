@@ -263,6 +263,49 @@ k3d-clean: ## Clean up all resources in namespace
 	@kubectl delete namespace $(NAMESPACE) --timeout=60s 2>/dev/null || true
 	@echo "✅ Cleanup complete"
 
+k3d-status: ## Show k3d cluster and deployment status
+	@echo "📊 K3D Cluster Status"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo "Cluster:"
+	@k3d cluster list | grep $(K3D_CLUSTER_NAME) || echo "Cluster not running"
+	@echo ""
+	@echo "Nodes:"
+	@kubectl get nodes 2>/dev/null || echo "Cluster not accessible"
+	@echo ""
+	@echo "Pods in $(NAMESPACE):"
+	@kubectl get pods -n $(NAMESPACE) 2>/dev/null || echo "Namespace not found"
+	@echo ""
+	@echo "Services in $(NAMESPACE):"
+	@kubectl get svc -n $(NAMESPACE) 2>/dev/null || echo "Namespace not found"
+	@echo ""
+	@echo "Jobs in $(NAMESPACE):"
+	@kubectl get jobs -n $(NAMESPACE) 2>/dev/null || echo "Namespace not found"
+
+k3d-logs-api: ## Follow API logs
+	@echo "📋 Following API logs (Ctrl+C to stop)..."
+	@kubectl logs -f -n $(NAMESPACE) -l app=bugdrill-api --tail=50
+
+k3d-logs-executor: ## Follow Executor logs
+	@echo "📋 Following Executor logs (Ctrl+C to stop)..."
+	@kubectl logs -f -n $(NAMESPACE) -l app=bugdrill-executor --tail=50
+
+k3d-logs-tests: ## Show test logs
+	@echo "📋 Test logs:"
+	@kubectl logs -n $(NAMESPACE) job/bugdrill-tests 2>/dev/null || echo "Test job not found"
+
+k3d-describe-api: ## Describe API pod (for debugging)
+	@kubectl describe pod -n $(NAMESPACE) -l app=bugdrill-api
+
+k3d-describe-executor: ## Describe Executor pod (for debugging)
+	@kubectl describe pod -n $(NAMESPACE) -l app=bugdrill-executor
+
+k3d-shell-api: ## Open shell in API pod
+	@kubectl exec -it -n $(NAMESPACE) deployment/bugdrill-api -- sh
+
+k3d-shell-executor: ## Open shell in Executor pod
+	@kubectl exec -it -n $(NAMESPACE) deployment/bugdrill-executor -- sh
+
 # Full cycle target - destroys, creates, deploys everything, and runs tests
 full-cycle-k3d: ## Complete k3d workflow: destroy -> create -> deploy all -> run tests
 	@echo "🚀 Starting full k3d deployment cycle..."
@@ -305,6 +348,72 @@ full-cycle-k3d: ## Complete k3d workflow: destroy -> create -> deploy all -> run
 # Quick redeploy after code changes
 k3d-quick-deploy: docker-build-prod k3d-redeploy-api k3d-redeploy-executor ## Build new images, push, and redeploy to k3d
 	@echo "✅ Quick redeploy complete!"
+
+# Complete rebuild and deployment cycle
+k3d-full-rebuild: ## Destroy cluster, rebuild all images (AMD64), push to Docker Hub, deploy everything, and run tests
+	@echo "═══════════════════════════════════════════════════"
+	@echo "🔨 FULL K3D REBUILD CYCLE"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo "Step 1: Building AMD64 images for k3d..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) docker-build-local
+	@echo ""
+	@echo "Step 2: Pushing images to Docker Hub..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) docker-push-local
+	@echo ""
+	@echo "Step 3: Destroying existing k3d cluster..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) k3d-destroy
+	@echo ""
+	@echo "Step 4: Creating fresh k3d cluster..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) k3d-create
+	@echo ""
+	@echo "Step 5: Deploying PostgreSQL..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) k3d-deploy-postgres
+	@echo ""
+	@echo "Step 6: Deploying Redis..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) k3d-deploy-redis
+	@echo ""
+	@echo "Step 7: Initializing database..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) k3d-init-db
+	@echo ""
+	@echo "Step 8: Deploying Executor..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) k3d-deploy-executor
+	@echo ""
+	@echo "Step 9: Deploying API..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) k3d-deploy-api
+	@echo ""
+	@echo "Step 10: Stabilizing services..."
+	@echo "───────────────────────────────────────────────────"
+	@sleep 15
+	@echo ""
+	@echo "Step 11: Running functional tests..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) k3d-deploy-tests
+	@echo ""
+	@$(MAKE) k3d-status
+	@echo ""
+	@echo "═══════════════════════════════════════════════════"
+	@echo "✅ FULL REBUILD CYCLE COMPLETED SUCCESSFULLY!"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo "🎯 All images rebuilt, pushed, deployed, and tested"
+	@echo "📦 Images on Docker Hub: $(DOCKER_USERNAME)/bugdrill-{api,executor,tests}:$(DOCKER_TAG)"
+	@echo "🌐 API endpoint: http://localhost:$(K3D_API_PORT)"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  make k3d-logs-api        - Follow API logs"
+	@echo "  make k3d-logs-executor   - Follow Executor logs"
+	@echo "  make k3d-status          - Check cluster status"
+	@echo "  make k3d-destroy         - Destroy the cluster"
 
 # Docker-based k3d runner (Linux-only, works on Windows via Docker)
 k3d-runner-build: ## Build the k3d runner Docker image
@@ -393,6 +502,35 @@ docker-build-prod: docker-buildx-setup ## Build production Docker images for ARM
 		--push \
 		.
 	@echo "✓ Multi-arch images built and pushed successfully"
+
+docker-build-local: ## Build local AMD64 images for k3d testing (fast build)
+	@echo "🔨 Building local AMD64 images for k3d..."
+	@echo "Building API image..."
+	docker buildx build --platform linux/amd64 \
+		-t $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG) \
+		-f Dockerfile \
+		--load \
+		.
+	@echo "Building Executor image..."
+	docker buildx build --platform linux/amd64 \
+		-t $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG) \
+		-f executor/Dockerfile \
+		--load \
+		.
+	@echo "Building Tests image..."
+	docker buildx build --platform linux/amd64 \
+		-t $(DOCKER_USERNAME)/bugdrill-tests:$(DOCKER_TAG) \
+		-f Dockerfile.tests \
+		--load \
+		.
+	@echo "✓ Local AMD64 images built successfully"
+
+docker-push-local: ## Push locally built images to Docker Hub
+	@echo "📤 Pushing images to Docker Hub..."
+	docker push $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG)
+	docker push $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG)
+	docker push $(DOCKER_USERNAME)/bugdrill-tests:$(DOCKER_TAG)
+	@echo "✓ All images pushed to Docker Hub"
 
 docker-build-push-prod: docker-build-prod ## Build and push production images (alias)
 
