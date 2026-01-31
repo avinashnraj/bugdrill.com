@@ -11,7 +11,9 @@ env:
   DOCKER_TAG: latest
 
 jobs:
-  test-and-build:
+  # Job 1: Build AMD64 images and run tests in k3d
+  build-and-test:
+    name: Build & Test (k3d)
     runs-on: ubuntu-latest
     
     steps:
@@ -29,11 +31,41 @@ jobs:
           sleep 10
           docker exec bugdrill-k3d-runner docker info
 
-      - name: Run k3d tests
+      - name: Build AMD64 images
         working-directory: ./backend
         run: |
-          echo "Running full k3d rebuild and tests..."
-          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-full-rebuild"
+          echo "Building AMD64 images for k3d..."
+          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make docker-build-local"
+
+      - name: Create k3d cluster
+        working-directory: ./backend
+        run: |
+          echo "Creating k3d cluster..."
+          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-create"
+
+      - name: Deploy databases (parallel)
+        working-directory: ./backend
+        run: |
+          echo "Deploying PostgreSQL and Redis in parallel..."
+          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-deploy-postgres & make k3d-deploy-redis & wait"
+
+      - name: Initialize database
+        working-directory: ./backend
+        run: |
+          echo "Running database migrations..."
+          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-init-db"
+
+      - name: Deploy services (parallel)
+        working-directory: ./backend
+        run: |
+          echo "Deploying Executor and API in parallel..."
+          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-deploy-executor & make k3d-deploy-api & wait"
+
+      - name: Run integration tests
+        working-directory: ./backend
+        run: |
+          echo "Running integration tests..."
+          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-deploy-tests"
 
       - name: Extract test results
         if: always()
@@ -41,18 +73,12 @@ jobs:
         run: |
           docker exec bugdrill-k3d-runner bash -c "cd /workspace && kubectl logs -n bugdrill job/bugdrill-tests --tail=100" || true
 
-      - name: Login to Docker Hub
-        if: success()
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Build and push production ARM64 images
-        if: success()
+      - name: Show cluster status on failure
+        if: failure()
         working-directory: ./backend
         run: |
-          make production-build-push
+          echo "=== Cluster Status ==="
+          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-status" || true
 
       - name: Cleanup
         if: always()
@@ -60,16 +86,35 @@ jobs:
         run: |
           docker compose -f docker-compose.k3d.yml down -v
 
-      - name: Notify success
-        if: success()
-        run: |
-          echo "✅ CI/CD Pipeline completed successfully!"
-          echo "- Tests passed in k3d cluster"
-          echo "- ARM64 production images pushed to Docker Hub"
-          echo "- Images: ${{ secrets.DOCKER_USERNAME }}/bugdrill-{api,executor,tests}:latest"
+  # Job 2: Build production ARM64 images
+  build-production:
+    name: Build Production (ARM64)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name != 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Notify failure
-        if: failure()
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build ARM64 images
+        working-directory: ./backend
         run: |
-          echo "❌ CI/CD Pipeline failed!"
-          echo "Check the logs above for details."
+          echo "Building ARM64 images for production..."
+          make production-build-push
+
+      - name: Image summary
+        run: |
+          echo "✅ Production images built and pushed!"
+          echo "Images: ${{ secrets.DOCKER_USERNAME }}/bugdrill-{api,executor,tests}:latest"
+          echo "Architecture: linux/arm64"
+          echo "Ready for EC2 deployment"
