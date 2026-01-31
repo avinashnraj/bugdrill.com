@@ -68,3 +68,33 @@ spec:
   - port: 8080
     targetPort: 8080
   type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bugdrill-api-ingress
+  namespace: bugdrill
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+  - host: api.bugdrill.local  # For local k3d development
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: bugdrill-api
+            port:
+              number: 8080
+  - host: api.bugdrill.com  # For production (Route53)
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: bugdrill-api
+            port:
+              number: 8080

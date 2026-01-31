@@ -1,0 +1,26 @@
+# Production Ingress with SSL/TLS (for EC2 deployment)
+# This will be used when you have a domain and SSL certificate
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bugdrill-api-ingress-tls
+  namespace: bugdrill
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: letsencrypt-prod  # If using cert-manager
+spec:
+  tls:
+  - hosts:
+    - api.bugdrill.com
+    secretName: bugdrill-api-tls
+  rules:
+  - host: api.bugdrill.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: bugdrill-api
+            port:
+              number: 8080

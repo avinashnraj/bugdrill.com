@@ -1,10 +1,9 @@
 // API Configuration
 export const API_CONFIG = {
-  // Change this to your backend URL
-  // For local development: http://localhost:8080/api/v1
-  // For production: https://api.bugdrill.com/api/v1
+  // Local k3d: http://api.bugdrill.local:8080/api/v1
+  // Production: https://api.bugdrill.com/api/v1
   BASE_URL: __DEV__ 
-    ? 'http://localhost:8080/api/v1' 
+    ? 'http://api.bugdrill.local:8080/api/v1' 
     : 'https://api.bugdrill.com/api/v1',
   
   TIMEOUT: 10000, // 10 seconds

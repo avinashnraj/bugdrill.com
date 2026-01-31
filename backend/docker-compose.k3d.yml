@@ -7,6 +7,9 @@ services:
       dockerfile: Dockerfile.k3d
     container_name: bugdrill-k3d-runner
     privileged: true
+    ports:
+      - "8080:80"    # HTTP ingress for mobile app
+      - "8443:443"   # HTTPS ingress (for future SSL)
     volumes:
       - ./:/workspace
       - k3d-data:/var/lib/docker

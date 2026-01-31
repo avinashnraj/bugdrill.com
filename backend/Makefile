@@ -79,7 +79,7 @@ k3d-destroy: ## Destroy k3d cluster
 
 k3d-create: k3d-destroy ## Create fresh k3d cluster
 	@echo "🚀 Creating k3d cluster: $(K3D_CLUSTER_NAME)"
-	@k3d cluster create $(K3D_CLUSTER_NAME) --agents 1 --port "$(K3D_API_PORT):8080@loadbalancer" --registry-create k3d-registry.localhost:$(K3D_REGISTRY_PORT) --wait
+	@k3d cluster create $(K3D_CLUSTER_NAME) --agents 1 --port "80:80@loadbalancer" --port "443:443@loadbalancer" --registry-create k3d-registry.localhost:$(K3D_REGISTRY_PORT) --wait
 	@kubectl cluster-info
 	@echo "✅ Cluster created"
 
@@ -179,6 +179,7 @@ k3d-full-rebuild: ## Complete k3d rebuild: build images, destroy cluster, deploy
 k3d-runner-up: ## Start k3d runner container
 	@docker-compose -f docker-compose.k3d.yml up -d
 	@echo "✅ k3d runner ready. Use: docker exec -ti bugdrill-k3d-runner bash"
+	@echo "📱 Mobile app: Update config.ts to use http://localhost:8080/api/v1"
 
 k3d-runner-down: ## Stop k3d runner container
 	@docker-compose -f docker-compose.k3d.yml down
