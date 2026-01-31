@@ -534,6 +534,194 @@ docker-push-local: ## Push locally built images to Docker Hub
 
 docker-build-push-prod: docker-build-prod ## Build and push production images (alias)
 
+production-build-push: docker-buildx-setup ## Build and push ARM64 images for EC2 production deployment
+	@echo "═══════════════════════════════════════════════════"
+	@echo "🏗️  BUILDING PRODUCTION ARM64 IMAGES"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo "Building API image (linux/arm64)..."
+	@docker buildx build --platform linux/arm64 \
+		-t $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG) \
+		-f Dockerfile \
+		--push \
+		.
+	@echo "✅ API image built and pushed"
+	@echo ""
+	@echo "Building Executor image (linux/arm64)..."
+	@docker buildx build --platform linux/arm64 \
+		-t $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG) \
+		-f executor/Dockerfile \
+		--push \
+		.
+	@echo "✅ Executor image built and pushed"
+	@echo ""
+	@echo "Building Tests image (linux/arm64)..."
+	@docker buildx build --platform linux/arm64 \
+		-t $(DOCKER_USERNAME)/bugdrill-tests:$(DOCKER_TAG) \
+		-f Dockerfile.tests \
+		--push \
+		.
+	@echo "✅ Tests image built and pushed"
+	@echo ""
+	@echo "═══════════════════════════════════════════════════"
+	@echo "✅ ALL PRODUCTION IMAGES READY"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo "Images pushed to Docker Hub:"
+	@echo "  📦 $(DOCKER_USERNAME)/bugdrill-api:$(DOCKER_TAG)"
+	@echo "  📦 $(DOCKER_USERNAME)/bugdrill-executor:$(DOCKER_TAG)"
+	@echo "  📦 $(DOCKER_USERNAME)/bugdrill-tests:$(DOCKER_TAG)"
+	@echo ""
+	@echo "Ready to deploy on EC2. Run on EC2 instance:"
+	@echo "  make ec2-full-deploy"
+
+# EC2 Production Deployment Variables
+EC2_NAMESPACE ?= bugdrill
+EC2_API_PORT ?= 8080
+
+ec2-clean-namespace: ## Clean up EC2 namespace for fresh deployment
+	@echo "🧹 Cleaning up $(EC2_NAMESPACE) namespace..."
+	@kubectl delete namespace $(EC2_NAMESPACE) --timeout=60s 2>/dev/null || true
+	@echo "✅ Namespace cleaned"
+
+ec2-deploy-postgres: ## Deploy PostgreSQL on EC2
+	@echo "🐘 Deploying PostgreSQL..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@helm upgrade --install bugdrill-postgres oci://registry-1.docker.io/bitnamicharts/postgresql \
+		--namespace $(EC2_NAMESPACE) \
+		--set auth.username=postgres \
+		--set auth.password=postgres \
+		--set auth.database=bugdrill \
+		--set primary.persistence.size=2Gi \
+		--wait --timeout=5m
+	@echo "✅ PostgreSQL deployed"
+
+ec2-deploy-redis: ## Deploy Redis on EC2
+	@echo "🔴 Deploying Redis..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@helm upgrade --install bugdrill-redis oci://registry-1.docker.io/bitnamicharts/redis \
+		--namespace $(EC2_NAMESPACE) \
+		--set auth.enabled=false \
+		--set master.persistence.size=2Gi \
+		--wait --timeout=5m
+	@echo "✅ Redis deployed"
+
+ec2-init-db: ## Initialize database with migrations on EC2
+	@echo "📊 Initializing database with migrations..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl delete job bugdrill-migrations -n $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl create configmap bugdrill-migrations -n $(EC2_NAMESPACE) \
+		--from-file=init-schema.sql=migrations/001_init_schema.sql \
+		--from-file=seed-data.sql=migrations/002_seed_data.sql \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@kubectl apply -f k3d-manifests/migrations.yaml
+	@echo "⏳ Waiting for migrations to complete..."
+	@kubectl wait --for=condition=complete job/bugdrill-migrations -n $(EC2_NAMESPACE) --timeout=120s || \
+		(echo "❌ Migrations failed!" && kubectl logs -n $(EC2_NAMESPACE) job/bugdrill-migrations && exit 1)
+	@kubectl logs -n $(EC2_NAMESPACE) job/bugdrill-migrations
+	@echo "✅ Database initialized successfully"
+
+ec2-deploy-executor: ## Deploy Executor on EC2
+	@echo "⚙️  Deploying BugDrill Executor from Docker Hub..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/executor.yaml
+	@echo "⏳ Waiting for Executor to be ready..."
+	@kubectl wait --for=condition=ready pod -l app=bugdrill-executor -n $(EC2_NAMESPACE) --timeout=180s || true
+	@echo "✅ Executor deployed successfully"
+
+ec2-deploy-api: ## Deploy API on EC2
+	@echo "🔧 Deploying BugDrill API from Docker Hub..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/api.yaml
+	@echo "⏳ Waiting for API pod to be created..."
+	@sleep 5
+	@echo "📋 Checking API pod status..."
+	@kubectl get pods -n $(EC2_NAMESPACE) -l app=bugdrill-api
+	@echo "⏳ Waiting for API to be ready (timeout: 5 minutes)..."
+	@kubectl wait --for=condition=ready pod -l app=bugdrill-api -n $(EC2_NAMESPACE) --timeout=300s || \
+		(echo "❌ API failed to start. Showing logs:" && \
+		 kubectl get pods -n $(EC2_NAMESPACE) -l app=bugdrill-api && \
+		 kubectl describe pod -n $(EC2_NAMESPACE) -l app=bugdrill-api && \
+		 kubectl logs -n $(EC2_NAMESPACE) -l app=bugdrill-api --tail=100 && \
+		 exit 1)
+	@echo "✅ API deployed successfully"
+
+ec2-deploy-tests: ## Deploy functional tests on EC2
+	@echo "🧪 Deploying functional tests..."
+	@kubectl create namespace $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl delete job bugdrill-tests -n $(EC2_NAMESPACE) 2>/dev/null || true
+	@kubectl apply -f k3d-manifests/tests.yaml
+	@echo "⏳ Waiting for tests to complete..."
+	@kubectl wait --for=condition=complete job/bugdrill-tests -n $(EC2_NAMESPACE) --timeout=300s || \
+		(echo "❌ Tests failed!" && kubectl logs -n $(EC2_NAMESPACE) job/bugdrill-tests && exit 1)
+	@echo "📋 Test logs:"
+	@kubectl logs -n $(EC2_NAMESPACE) job/bugdrill-tests
+	@echo "✅ All tests passed!"
+
+ec2-status: ## Show EC2 cluster status
+	@echo "📊 EC2 k3s Cluster Status"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo "Nodes:"
+	@kubectl get nodes 2>/dev/null || echo "Cluster not accessible"
+	@echo ""
+	@echo "Pods in $(EC2_NAMESPACE):"
+	@kubectl get pods -n $(EC2_NAMESPACE) 2>/dev/null || echo "Namespace not found"
+	@echo ""
+	@echo "Services in $(EC2_NAMESPACE):"
+	@kubectl get svc -n $(EC2_NAMESPACE) 2>/dev/null || echo "Namespace not found"
+
+ec2-full-deploy: ## Complete EC2 deployment: clean -> deploy all -> run tests
+	@echo "═══════════════════════════════════════════════════"
+	@echo "🚀 EC2 PRODUCTION DEPLOYMENT (k3s)"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo "Step 1: Cleaning namespace..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) ec2-clean-namespace
+	@echo ""
+	@echo "Step 2: Deploying PostgreSQL..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) ec2-deploy-postgres
+	@echo ""
+	@echo "Step 3: Deploying Redis..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) ec2-deploy-redis
+	@echo ""
+	@echo "Step 4: Initializing database..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) ec2-init-db
+	@echo ""
+	@echo "Step 5: Deploying Executor..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) ec2-deploy-executor
+	@echo ""
+	@echo "Step 6: Deploying API..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) ec2-deploy-api
+	@echo ""
+	@echo "Step 7: Stabilizing services..."
+	@echo "───────────────────────────────────────────────────"
+	@sleep 15
+	@echo ""
+	@echo "Step 8: Running functional tests..."
+	@echo "───────────────────────────────────────────────────"
+	@$(MAKE) ec2-deploy-tests
+	@echo ""
+	@$(MAKE) ec2-status
+	@echo ""
+	@echo "═══════════════════════════════════════════════════"
+	@echo "✅ EC2 PRODUCTION DEPLOYMENT COMPLETE!"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo "🎯 Full stack deployed and tested on k3s"
+	@echo "🌐 API endpoint: http://<ec2-public-ip>:$(EC2_API_PORT)"
+	@echo ""
+	@echo "Useful commands:"
+	@echo "  make ec2-status          - Check cluster status"
+	@echo "  kubectl get pods -n $(EC2_NAMESPACE)"
+	@echo "  kubectl logs -n $(EC2_NAMESPACE) -l app=bugdrill-api"
+
 docker-login: ## Login to Docker Hub
 	docker login
 
