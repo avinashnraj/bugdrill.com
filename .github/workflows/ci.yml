@@ -1,0 +1,75 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  DOCKER_TAG: latest
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start k3d runner container
+        working-directory: ./backend
+        run: |
+          docker-compose -f docker-compose.k3d.yml up -d
+          # Wait for Docker-in-Docker to be ready
+          sleep 10
+          docker exec bugdrill-k3d-runner docker info
+
+      - name: Run k3d tests
+        working-directory: ./backend
+        run: |
+          echo "Running full k3d rebuild and tests..."
+          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-full-rebuild"
+
+      - name: Extract test results
+        if: always()
+        working-directory: ./backend
+        run: |
+          docker exec bugdrill-k3d-runner bash -c "cd /workspace && kubectl logs -n bugdrill job/bugdrill-tests --tail=100" || true
+
+      - name: Login to Docker Hub
+        if: success()
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push production ARM64 images
+        if: success()
+        working-directory: ./backend
+        run: |
+          make production-build-push
+
+      - name: Cleanup
+        if: always()
+        working-directory: ./backend
+        run: |
+          docker-compose -f docker-compose.k3d.yml down -v
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ CI/CD Pipeline completed successfully!"
+          echo "- Tests passed in k3d cluster"
+          echo "- ARM64 production images pushed to Docker Hub"
+          echo "- Images: ${{ secrets.DOCKER_USERNAME }}/bugdrill-{api,executor,tests}:latest"
+
+      - name: Notify failure
+        if: failure()
+        run: |
+          echo "❌ CI/CD Pipeline failed!"
+          echo "Check the logs above for details."
