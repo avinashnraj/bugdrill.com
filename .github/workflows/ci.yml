@@ -24,7 +24,7 @@ jobs:
       - name: Start k3d runner container
         working-directory: ./backend
         run: |
-          docker-compose -f docker-compose.k3d.yml up -d
+          docker compose -f docker-compose.k3d.yml up -d
           # Wait for Docker-in-Docker to be ready
           sleep 10
           docker exec bugdrill-k3d-runner docker info
@@ -58,7 +58,7 @@ jobs:
         if: always()
         working-directory: ./backend
         run: |
-          docker-compose -f docker-compose.k3d.yml down -v
+          docker compose -f docker-compose.k3d.yml down -v
 
       - name: Notify success
         if: success()
