@@ -8,17 +8,52 @@ on:
 
 env:
   DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-  DOCKER_TAG: latest
 
 jobs:
   # Job 1: Build AMD64 images and run tests in k3d
   build-and-test:
     name: Build & Test (k3d)
     runs-on: ubuntu-latest
+    outputs:
+      docker_tag: ${{ steps.set_tag.outputs.tag }}
+      is_release: ${{ steps.set_tag.outputs.is_release }}
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set Docker tag
+        id: set_tag
+        run: |
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          
+          # Try to get semantic version from git tags
+          GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "")
+          
+          if [ -n "$GIT_TAG" ]; then
+            # Use git tag as-is (e.g., v1.2.3)
+            TAG="$GIT_TAG"
+            echo "Using git tag: ${TAG}"
+          elif [ "$BRANCH_NAME" == "main" ]; then
+            # Main branch without tag: get latest tag and append commit count + sha
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            COMMIT_COUNT=$(git rev-list --count HEAD)
+            TAG="${LATEST_TAG}-${COMMIT_COUNT}-${SHORT_SHA}"
+            echo "Main branch version: ${TAG}"
+          else
+            # Feature/develop branch: version-branch-sha
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            SAFE_BRANCH=$(echo "$BRANCH_NAME" | sed 's/\//-/g')
+            TAG="${LATEST_TAG}-${SAFE_BRANCH}.${SHORT_SHA}"
+            echo "Feature branch version: ${TAG}"
+          fi
+          
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "is_release=$([[ -n "$GIT_TAG" ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+          echo "📦 Docker tag: ${TAG}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -43,15 +78,32 @@ jobs:
 
       - name: Build AMD64 images
         working-directory: ./backend
+        env:
+          DOCKER_TAG: ${{ steps.set_tag.outputs.tag }}
         run: |
-          echo "Building AMD64 images for k3d..."
+          echo "Building AMD64 images with tag: ${DOCKER_TAG}..."
           make docker-build-local
 
       - name: Push images to Docker Hub
         working-directory: ./backend
+        env:
+          DOCKER_TAG: ${{ steps.set_tag.outputs.tag }}
         run: |
-          echo "Pushing AMD64 images to Docker Hub..."
+          echo "Pushing AMD64 images with tag: ${DOCKER_TAG}..."
           make docker-push-local
+          
+          # Also push as 'latest' if this is a release tag or on main branch
+          if [ "${{ steps.set_tag.outputs.is_release }}" == "true" ] || [ "${{ steps.set_tag.outputs.branch }}" == "main" ]; then
+            echo "Tagging and pushing as latest..."
+            docker tag ${DOCKER_USERNAME}/bugdrill-api:${DOCKER_TAG} ${DOCKER_USERNAME}/bugdrill-api:latest
+            docker tag ${DOCKER_USERNAME}/bugdrill-executor:${DOCKER_TAG} ${DOCKER_USERNAME}/bugdrill-executor:latest
+            docker tag ${DOCKER_USERNAME}/bugdrill-tests:${DOCKER_TAG} ${DOCKER_USERNAME}/bugdrill-tests:latest
+            
+            docker push ${DOCKER_USERNAME}/bugdrill-api:latest
+            docker push ${DOCKER_USERNAME}/bugdrill-executor:latest
+            docker push ${DOCKER_USERNAME}/bugdrill-tests:latest
+            echo "✅ Also pushed as :latest"
+          fi
 
       - name: Create k3d cluster
         working-directory: ./backend
@@ -83,6 +135,20 @@ jobs:
           # Wait for migrations to complete
           kubectl wait --for=condition=complete job -l app=bugdrill-init -n bugdrill --timeout=180s || \
           kubectl wait --for=condition=complete job/bugdrill-init-db -n bugdrill --timeout=180s || true
+
+      - name: Update manifests with Docker tag
+        working-directory: ./backend
+        env:
+          DOCKER_TAG: ${{ steps.set_tag.outputs.tag }}
+        run: |
+          echo "Updating manifests to use tag: ${DOCKER_TAG}..."
+          
+          # Update image tags in manifests
+          sed -i "s|image: ${DOCKER_USERNAME}/bugdrill-api:.*|image: ${DOCKER_USERNAME}/bugdrill-api:${DOCKER_TAG}|g" k3d-manifests/api.yaml
+          sed -i "s|image: ${DOCKER_USERNAME}/bugdrill-executor:.*|image: ${DOCKER_USERNAME}/bugdrill-executor:${DOCKER_TAG}|g" k3d-manifests/executor.yaml
+          sed -i "s|image: ${DOCKER_USERNAME}/bugdrill-tests:.*|image: ${DOCKER_USERNAME}/bugdrill-tests:${DOCKER_TAG}|g" k3d-manifests/tests.yaml
+          
+          echo "✅ Manifests updated"
 
       - name: Deploy services (parallel)
         working-directory: ./backend
@@ -150,13 +216,30 @@ jobs:
 
       - name: Build ARM64 images
         working-directory: ./backend
+        env:
+          DOCKER_TAG: ${{ needs.build-and-test.outputs.docker_tag }}
         run: |
-          echo "Building ARM64 images for production..."
+          echo "Building ARM64 images with tag: ${DOCKER_TAG}..."
           make production-build-push
+          
+          # Also push as 'latest' if this is a release tag or on main branch
+          if [ "${{ needs.build-and-test.outputs.is_release }}" == "true" ] || [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "Tagging and pushing ARM64 as latest..."
+            docker buildx build --platform linux/arm64 --target api -t ${DOCKER_USERNAME}/bugdrill-api:latest --push .
+            docker buildx build --platform linux/arm64 --target executor -t ${DOCKER_USERNAME}/bugdrill-executor:latest --push .
+            docker buildx build --platform linux/arm64 --target tests -t ${DOCKER_USERNAME}/bugdrill-tests:latest --push .
+            echo "✅ Also pushed ARM64 as :latest"
+          fi
 
       - name: Image summary
+        env:
+          DOCKER_TAG: ${{ needs.build-and-test.outputs.docker_tag }}
         run: |
-          echo "✅ Production images built and pushed!"
-          echo "Images: ${{ secrets.DOCKER_USERNAME }}/bugdrill-{api,executor,tests}:latest"
+          echo "✅ Production ARM64 images built and pushed!"
+          echo "Tag: ${DOCKER_TAG}"
+          echo "Images:"
+          echo "  - ${DOCKER_USERNAME}/bugdrill-api:${DOCKER_TAG}"
+          echo "  - ${DOCKER_USERNAME}/bugdrill-executor:${DOCKER_TAG}"
+          echo "  - ${DOCKER_USERNAME}/bugdrill-tests:${DOCKER_TAG}"
           echo "Architecture: linux/arm64"
           echo "Ready for EC2 deployment"
