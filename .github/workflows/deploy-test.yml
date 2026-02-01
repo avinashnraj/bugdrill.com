@@ -71,7 +71,7 @@ jobs:
               --env="API_URL=http://bugdrill-api:8080" \
               --env="EXECUTOR_URL=http://bugdrill-executor:8081"
             
-            # Wait for tests to complete
+            # Wait for tests to complete 
             echo "Waiting for tests to complete..."
             kubectl wait --for=condition=Ready pod/bugdrill-tests -n bugdrill --timeout=30s || true
             kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/bugdrill-tests -n bugdrill --timeout=300s || \
