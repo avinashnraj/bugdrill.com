@@ -96,17 +96,17 @@ jobs:
           sleep 10
           kubectl get pods -n bugdrill
           kubectl wait --for=condition=Ready pod -l app=bugdrill-executor -n bugdrill --timeout=180s || true
-          kubectl wait --for=condition=Ready pod -l app=bugdrill-api -n bugdrill --timeout=180s || true=120s
-          kubectl wait --for=condition=Ready pod -l app=bugdrill-api -n bugdrill --timeout=120s
+          kubectl wait --for=condition=Ready pod -l app=bugdrill-api -n bugdrill --timeout=180s || true
 
       - name: Run integration tests
         working-directory: ./backend
         run: |
           echo "Running integration tests..."
-          make k3d-deploy-tests -l app=bugdrill-tests -n bugdrill --timeout=300s || \
-          kubectl wait --for=condition=complete job
+          make k3d-deploy-tests
           
           # Wait for tests to complete
+          echo "Waiting for test job to complete..."
+          kubectl wait --for=condition=complete job -l app=bugdrill-tests -n bugdrill --timeout=300s || \
           kubectl wait --for=condition=complete job/bugdrill-tests -n bugdrill --timeout=300s
 
       - name: Extract test results
