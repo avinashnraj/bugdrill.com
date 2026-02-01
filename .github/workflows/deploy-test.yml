@@ -68,7 +68,7 @@ jobs:
             # Create test pod
             kubectl run bugdrill-tests --image=${DOCKER_USERNAME}/bugdrill-tests:${DOCKER_TAG} \
               --restart=Never -n bugdrill \
-              --env="API_URL=http://bugdrill-api:8080" \
+              --env="API_BASE_URL=http://bugdrill-api:8080" \
               --env="EXECUTOR_URL=http://bugdrill-executor:8081"
             
             # Wait for tests to complete
