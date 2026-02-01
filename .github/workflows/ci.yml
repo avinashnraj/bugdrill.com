@@ -27,9 +27,41 @@ jobs:
         working-directory: ./backend
         run: |
           docker compose -f docker-compose.k3d.yml up -d
-          # Wait for Docker-in-Docker to be ready
-          sleep 10
-          docker exec bugdrill-k3d-runner docker info
+          
+          # Wait for container to be running
+          echo "Waiting for container to start..."
+          sleep 5
+          
+          # Check if container is running
+          if ! docker ps | grep -q bugdrill-k3d-runner; then
+            echo "Container failed to start. Checking logs..."
+            docker logs bugdrill-k3d-runner || true
+            docker compose -f docker-compose.k3d.yml logs
+            exit 1
+          fi
+          
+          # Wait for Docker-in-Docker daemon to be ready
+          echo "Waiting for Docker daemon to initialize..."
+          max_attempts=30
+          attempt=0
+          
+          while [ $attempt -lt $max_attempts ]; do
+            if docker exec bugdrill-k3d-runner docker info >/dev/null 2>&1; then
+              echo "✓ Docker daemon is ready"
+              docker exec bugdrill-k3d-runner docker info
+              break
+            fi
+            
+            attempt=$((attempt + 1))
+            echo "Waiting for Docker daemon... ($attempt/$max_attempts)"
+            sleep 2
+          done
+          
+          if [ $attempt -eq $max_attempts ]; then
+            echo "✗ Docker daemon failed to start"
+            docker logs bugdrill-k3d-runner
+            exit 1
+          fi
 
       - name: Build AMD64 images
         working-directory: ./backend
