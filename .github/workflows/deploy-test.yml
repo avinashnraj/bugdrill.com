@@ -35,7 +35,8 @@ jobs:
           echo "Using tag: ${DOCKER_TAG}"
           echo "Username: ${DOCKER_USERNAME}"
           
-          ssh -i ~/.ssh/bugdrill.pem ubuntu@ec2-54-237-170-112.compute-1.amazonaws.com bash -s << EOF
+          ssh -i ~/.ssh/bugdrill.pem ubuntu@ec2-54-237-170-112.compute-1.amazonaws.com \
+            DOCKER_TAG="${DOCKER_TAG}" DOCKER_USERNAME="${DOCKER_USERNAME}" bash -s << 'EOF'
             # Update API deployment
             kubectl set image deployment/bugdrill-api \
               bugdrill-api=${DOCKER_USERNAME}/bugdrill-api:${DOCKER_TAG} \
