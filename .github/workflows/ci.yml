@@ -8,11 +8,198 @@ on:
 
 env:
   DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-  DOCKER_TAG: latest
 
 jobs:
-  test-and-build:
+  # Job 1: Build AMD64 images and run tests in k3d
+  build-and-test:
+    name: Build & Test (k3d)
     runs-on: ubuntu-latest
+    outputs:
+      docker_tag: ${{ steps.set_tag.outputs.tag }}
+      is_release: ${{ steps.set_tag.outputs.is_release }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set Docker tag
+        id: set_tag
+        run: |
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          
+          # Try to get semantic version from git tags
+          GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "")
+          
+          if [ -n "$GIT_TAG" ]; then
+            # Use git tag as-is (e.g., v1.2.3)
+            TAG="$GIT_TAG"
+            echo "Using git tag: ${TAG}"
+          elif [ "$BRANCH_NAME" == "main" ]; then
+            # Main branch without tag: get latest tag and append commit count + sha
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            COMMIT_COUNT=$(git rev-list --count HEAD)
+            TAG="${LATEST_TAG}-${COMMIT_COUNT}-${SHORT_SHA}"
+            echo "Main branch version: ${TAG}"
+          else
+            # Feature/develop branch: version-branch-sha
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            SAFE_BRANCH=$(echo "$BRANCH_NAME" | sed 's/\//-/g')
+            TAG="${LATEST_TAG}-${SAFE_BRANCH}.${SHORT_SHA}"
+            echo "Feature branch version: ${TAG}"
+          fi
+          
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "is_release=$([[ -n "$GIT_TAG" ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+          echo "📦 Docker tag: ${TAG}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Install k3d and kubectl
+        run: |
+          # Install k3d
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+          k3d version
+          
+          # Install kubectl
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          kubectl version --client
+
+      - name: Build AMD64 images
+        working-directory: ./backend
+        env:
+          DOCKER_TAG: ${{ steps.set_tag.outputs.tag }}
+        run: |
+          echo "Building AMD64 images with tag: ${DOCKER_TAG}..."
+          make docker-build-local
+
+      - name: Push images to Docker Hub
+        working-directory: ./backend
+        env:
+          DOCKER_TAG: ${{ steps.set_tag.outputs.tag }}
+        run: |
+          echo "Pushing AMD64 images with tag: ${DOCKER_TAG}..."
+          make docker-push-local
+          
+          # Also push as 'latest' if this is a release tag or on main branch
+          if [ "${{ steps.set_tag.outputs.is_release }}" == "true" ] || [ "${{ steps.set_tag.outputs.branch }}" == "main" ]; then
+            echo "Tagging and pushing as latest..."
+            docker tag ${DOCKER_USERNAME}/bugdrill-api:${DOCKER_TAG} ${DOCKER_USERNAME}/bugdrill-api:latest
+            docker tag ${DOCKER_USERNAME}/bugdrill-executor:${DOCKER_TAG} ${DOCKER_USERNAME}/bugdrill-executor:latest
+            docker tag ${DOCKER_USERNAME}/bugdrill-tests:${DOCKER_TAG} ${DOCKER_USERNAME}/bugdrill-tests:latest
+            
+            docker push ${DOCKER_USERNAME}/bugdrill-api:latest
+            docker push ${DOCKER_USERNAME}/bugdrill-executor:latest
+            docker push ${DOCKER_USERNAME}/bugdrill-tests:latest
+            echo "✅ Also pushed as :latest"
+          fi
+
+      - name: Create k3d cluster
+        working-directory: ./backend
+        run: |
+          echo "Creating k3d cluster..."
+          make k3d-create
+          
+          # Wait for cluster to be ready
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+
+      - name: Deploy databases (parallel)
+        working-directory: ./backend
+        run: |
+          echo "Deploying PostgreSQL and Redis..."
+          make k3d-deploy-postgres &
+          make k3d-deploy-redis &
+          wait
+          
+          # Wait for databases to be ready (Bitnami chart labels)
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=postgresql -n bugdrill --timeout=180s
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=redis,app.kubernetes.io/component=master -n bugdrill --timeout=180s
+
+      - name: Initialize database
+        working-directory: ./backend
+        run: |
+          echo "Running database migrations..."
+          make k3d-init-db
+          
+          # Wait for migrations to complete
+          kubectl wait --for=condition=complete job -l app=bugdrill-init -n bugdrill --timeout=180s || \
+          kubectl wait --for=condition=complete job/bugdrill-init-db -n bugdrill --timeout=180s || true
+
+      - name: Update manifests with Docker tag
+        working-directory: ./backend
+        env:
+          DOCKER_TAG: ${{ steps.set_tag.outputs.tag }}
+        run: |
+          echo "Updating manifests to use tag: ${DOCKER_TAG}..."
+          
+          # Update image tags in manifests
+          sed -i "s|image: ${DOCKER_USERNAME}/bugdrill-api:.*|image: ${DOCKER_USERNAME}/bugdrill-api:${DOCKER_TAG}|g" k3d-manifests/api.yaml
+          sed -i "s|image: ${DOCKER_USERNAME}/bugdrill-executor:.*|image: ${DOCKER_USERNAME}/bugdrill-executor:${DOCKER_TAG}|g" k3d-manifests/executor.yaml
+          sed -i "s|image: ${DOCKER_USERNAME}/bugdrill-tests:.*|image: ${DOCKER_USERNAME}/bugdrill-tests:${DOCKER_TAG}|g" k3d-manifests/tests.yaml
+          
+          echo "✅ Manifests updated"
+
+      - name: Deploy services (parallel)
+        working-directory: ./backend
+        run: |
+          echo "Deploying Executor and API..."
+          make k3d-deploy-executor &
+          make k3d-deploy-api &
+          wait
+          
+          echo "Waiting for services..."
+          sleep 10
+          kubectl get pods -n bugdrill
+          kubectl wait --for=condition=Ready pod -l app=bugdrill-executor -n bugdrill --timeout=180s || true
+          kubectl wait --for=condition=Ready pod -l app=bugdrill-api -n bugdrill --timeout=180s || true
+
+      - name: Run integration tests
+        working-directory: ./backend
+        run: |
+          echo "Running integration tests..."
+          make k3d-deploy-tests
+          
+          # Wait for tests to complete
+          echo "Waiting for test job to complete..."
+          kubectl wait --for=condition=complete job -l app=bugdrill-tests -n bugdrill --timeout=300s || \
+          kubectl wait --for=condition=complete job/bugdrill-tests -n bugdrill --timeout=300s
+
+      - name: Extract test results
+        if: always()
+        working-directory: ./backend
+        run: |
+          kubectl logs -n bugdrill job/bugdrill-tests --tail=100 || true
+
+      - name: Show cluster status on failure
+        if: failure()
+        working-directory: ./backend
+        run: |
+          echo "=== Cluster Status ==="
+          make k3d-status || true
+
+      - name: Cleanup
+        if: always()
+        working-directory: ./backend
+        run: |
+          k3d cluster delete bugdrill-local || true
+
+  # Job 2: Build production ARM64 images
+  build-production:
+    name: Build Production (ARM64)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name != 'pull_request'
     
     steps:
       - name: Checkout code
@@ -21,55 +208,38 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Start k3d runner container
-        working-directory: ./backend
-        run: |
-          docker-compose -f docker-compose.k3d.yml up -d
-          # Wait for Docker-in-Docker to be ready
-          sleep 10
-          docker exec bugdrill-k3d-runner docker info
-
-      - name: Run k3d tests
-        working-directory: ./backend
-        run: |
-          echo "Running full k3d rebuild and tests..."
-          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-full-rebuild"
-
-      - name: Extract test results
-        if: always()
-        working-directory: ./backend
-        run: |
-          docker exec bugdrill-k3d-runner bash -c "cd /workspace && kubectl logs -n bugdrill job/bugdrill-tests --tail=100" || true
-
       - name: Login to Docker Hub
-        if: success()
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push production ARM64 images
-        if: success()
+      - name: Build ARM64 images
         working-directory: ./backend
+        env:
+          DOCKER_TAG: ${{ needs.build-and-test.outputs.docker_tag }}
         run: |
+          echo "Building ARM64 images with tag: ${DOCKER_TAG}..."
           make production-build-push
+          
+          # Also push as 'latest' if this is a release tag or on main branch
+          if [ "${{ needs.build-and-test.outputs.is_release }}" == "true" ] || [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "Tagging and pushing ARM64 as latest..."
+            docker buildx build --platform linux/arm64 --target api -t ${DOCKER_USERNAME}/bugdrill-api:latest --push .
+            docker buildx build --platform linux/arm64 --target executor -t ${DOCKER_USERNAME}/bugdrill-executor:latest --push .
+            docker buildx build --platform linux/arm64 --target tests -t ${DOCKER_USERNAME}/bugdrill-tests:latest --push .
+            echo "✅ Also pushed ARM64 as :latest"
+          fi
 
-      - name: Cleanup
-        if: always()
-        working-directory: ./backend
+      - name: Image summary
+        env:
+          DOCKER_TAG: ${{ needs.build-and-test.outputs.docker_tag }}
         run: |
-          docker-compose -f docker-compose.k3d.yml down -v
-
-      - name: Notify success
-        if: success()
-        run: |
-          echo "✅ CI/CD Pipeline completed successfully!"
-          echo "- Tests passed in k3d cluster"
-          echo "- ARM64 production images pushed to Docker Hub"
-          echo "- Images: ${{ secrets.DOCKER_USERNAME }}/bugdrill-{api,executor,tests}:latest"
-
-      - name: Notify failure
-        if: failure()
-        run: |
-          echo "❌ CI/CD Pipeline failed!"
-          echo "Check the logs above for details."
+          echo "✅ Production ARM64 images built and pushed!"
+          echo "Tag: ${DOCKER_TAG}"
+          echo "Images:"
+          echo "  - ${DOCKER_USERNAME}/bugdrill-api:${DOCKER_TAG}"
+          echo "  - ${DOCKER_USERNAME}/bugdrill-executor:${DOCKER_TAG}"
+          echo "  - ${DOCKER_USERNAME}/bugdrill-tests:${DOCKER_TAG}"
+          echo "Architecture: linux/arm64"
+          echo "Ready for EC2 deployment"

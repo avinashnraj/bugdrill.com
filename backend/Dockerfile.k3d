@@ -27,9 +27,10 @@ RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | b
 # Set working directory
 WORKDIR /workspace
 
-# Copy entrypoint script
-COPY docker-entrypoint-k3d.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint-k3d.sh
+# Copy entrypoint script and fix line endings
+COPY docker-entrypoint-k3d.sh /usr/local/bin/docker-entrypoint-k3d.sh
+RUN dos2unix /usr/local/bin/docker-entrypoint-k3d.sh || sed -i 's/\r$//' /usr/local/bin/docker-entrypoint-k3d.sh \
+    && chmod +x /usr/local/bin/docker-entrypoint-k3d.sh
 
 ENTRYPOINT ["docker-entrypoint-k3d.sh"]
 CMD ["sleep", "infinity"]
