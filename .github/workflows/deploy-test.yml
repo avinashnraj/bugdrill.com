@@ -1,0 +1,66 @@
+name: Quick Deploy Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      docker_tag:
+        description: 'Docker tag to deploy (e.g., v0.0.0-123-abc1234 or latest)'
+        required: true
+        default: 'latest'
+
+env:
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+
+jobs:
+  deploy-test:
+    name: Test EC2 Deployment
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Configure SSH
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$EC2_SSH_KEY" > ~/.ssh/bugdrill.pem
+          chmod 600 ~/.ssh/bugdrill.pem
+          ssh-keyscan -H ec2-54-237-170-112.compute-1.amazonaws.com >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2
+        env:
+          DOCKER_TAG: ${{ github.event.inputs.docker_tag }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        run: |
+          echo "🚀 Deploying to EC2..."
+          echo "Using tag: ${DOCKER_TAG}"
+          echo "Username: ${DOCKER_USERNAME}"
+          
+          ssh -i ~/.ssh/bugdrill.pem ubuntu@ec2-54-237-170-112.compute-1.amazonaws.com bash -s << EOF
+            # Update API deployment
+            kubectl set image deployment/bugdrill-api \
+              bugdrill-api=${DOCKER_USERNAME}/bugdrill-api:${DOCKER_TAG} \
+              -n bugdrill
+            
+            # Update Executor deployment
+            kubectl set image deployment/bugdrill-executor \
+              bugdrill-executor=${DOCKER_USERNAME}/bugdrill-executor:${DOCKER_TAG} \
+              -n bugdrill
+            
+            # Wait for rollout
+            echo "Waiting for API rollout..."
+            kubectl rollout status deployment/bugdrill-api -n bugdrill --timeout=300s
+            
+            echo "Waiting for Executor rollout..."
+            kubectl rollout status deployment/bugdrill-executor -n bugdrill --timeout=300s
+            
+            # Show status
+            echo ""
+            echo "✅ Deployment complete!"
+            echo "Deployed version: ${DOCKER_TAG}"
+            kubectl get pods -n bugdrill -l 'app in (bugdrill-api,bugdrill-executor)'
+          EOF
+
+      - name: Summary
+        run: |
+          echo "✅ Test deployment complete!"
+          echo "Tag deployed: ${{ github.event.inputs.docker_tag }}"
