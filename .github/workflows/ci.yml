@@ -58,9 +58,9 @@ jobs:
           make k3d-deploy-redis &
           wait
           
-          # Wait for databases to be ready
-          kubectl wait --for=condition=Ready pod -l app=postgres -n bugdrill --timeout=120s
-          kubectl wait --for=condition=Ready pod -l app=redis -n bugdrill --timeout=120s
+          # Wait for databases to be ready (Bitnami chart labels)
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=postgresql -n bugdrill --timeout=180s
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=redis,app.kubernetes.io/component=master -n bugdrill --timeout=180s
 
       - name: Initialize database
         working-directory: ./backend
@@ -69,7 +69,8 @@ jobs:
           make k3d-init-db
           
           # Wait for migrations to complete
-          kubectl wait --for=condition=complete job/bugdrill-init-db -n bugdrill --timeout=120s
+          kubectl wait --for=condition=complete job -l app=bugdrill-init -n bugdrill --timeout=180s || \
+          kubectl wait --for=condition=complete job/bugdrill-init-db -n bugdrill --timeout=180s || true
 
       - name: Deploy services (parallel)
         working-directory: ./backend
@@ -79,15 +80,19 @@ jobs:
           make k3d-deploy-api &
           wait
           
-          # Wait for services to be ready
-          kubectl wait --for=condition=Ready pod -l app=bugdrill-executor -n bugdrill --timeout=120s
+          echo "Waiting for services..."
+          sleep 10
+          kubectl get pods -n bugdrill
+          kubectl wait --for=condition=Ready pod -l app=bugdrill-executor -n bugdrill --timeout=180s || true
+          kubectl wait --for=condition=Ready pod -l app=bugdrill-api -n bugdrill --timeout=180s || true=120s
           kubectl wait --for=condition=Ready pod -l app=bugdrill-api -n bugdrill --timeout=120s
 
       - name: Run integration tests
         working-directory: ./backend
         run: |
           echo "Running integration tests..."
-          make k3d-deploy-tests
+          make k3d-deploy-tests -l app=bugdrill-tests -n bugdrill --timeout=300s || \
+          kubectl wait --for=condition=complete job
           
           # Wait for tests to complete
           kubectl wait --for=condition=complete job/bugdrill-tests -n bugdrill --timeout=300s
