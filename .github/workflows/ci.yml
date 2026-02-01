@@ -23,6 +23,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
       - name: Install k3d and kubectl
         run: |
           # Install k3d
@@ -40,6 +46,12 @@ jobs:
         run: |
           echo "Building AMD64 images for k3d..."
           make docker-build-local
+
+      - name: Push images to Docker Hub
+        working-directory: ./backend
+        run: |
+          echo "Pushing AMD64 images to Docker Hub..."
+          make docker-push-local
 
       - name: Create k3d cluster
         working-directory: ./backend
