@@ -299,10 +299,10 @@ jobs:
             echo ""
             echo "🧪 Running functional tests on production..."
             
-            # Delete old test job if exists
-            kubectl delete job bugdrill-tests -n bugdrill --ignore-not-found=true
+            # Delete old test pod if exists
+            kubectl delete pod bugdrill-tests -n bugdrill --ignore-not-found=true
             
-            # Create test job with the deployed version
+            # Create test pod
             kubectl run bugdrill-tests --image=${DOCKER_USERNAME}/bugdrill-tests:${DOCKER_TAG} \
               --restart=Never -n bugdrill \
               --env="API_URL=http://bugdrill-api:8080" \
@@ -310,21 +310,23 @@ jobs:
             
             # Wait for tests to complete
             echo "Waiting for tests to complete..."
-            kubectl wait --for=condition=complete job/bugdrill-tests -n bugdrill --timeout=300s || \
-            kubectl wait --for=condition=failed job/bugdrill-tests -n bugdrill --timeout=10s
+            kubectl wait --for=condition=Ready pod/bugdrill-tests -n bugdrill --timeout=30s || true
+            kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/bugdrill-tests -n bugdrill --timeout=300s || \
+            kubectl wait --for=jsonpath='{.status.phase}'=Failed pod/bugdrill-tests -n bugdrill --timeout=10s || true
             
             # Show test results
             echo ""
             echo "📊 Test Results:"
-            kubectl logs job/bugdrill-tests -n bugdrill --tail=50
+            kubectl logs pod/bugdrill-tests -n bugdrill --tail=50
             
             # Check test status
-            if kubectl get job bugdrill-tests -n bugdrill -o jsonpath='{.status.succeeded}' | grep -q 1; then
+            STATUS=\$(kubectl get pod bugdrill-tests -n bugdrill -o jsonpath='{.status.phase}')
+            if [ "\$STATUS" = "Succeeded" ]; then
               echo ""
               echo "✅ Production tests PASSED!"
             else
               echo ""
-              echo "❌ Production tests FAILED!"
+              echo "❌ Production tests FAILED! (Status: \$STATUS)"
               exit 1
             fi
           EOF
