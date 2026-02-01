@@ -296,7 +296,7 @@ jobs:
             kubectl rollout status deployment/bugdrill-executor -n bugdrill --timeout=300s
             kubectl rollout status deployment/bugdrill-executor -n bugdrill --timeout=300s
             
-            # Show status
+            # Show status 
             echo ""
             echo "✅ Deployment complete!"
             kubectl get pods -n bugdrill -l 'app in (bugdrill-api,bugdrill-executor)'
