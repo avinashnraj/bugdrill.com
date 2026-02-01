@@ -265,6 +265,7 @@ jobs:
           ssh-keyscan -H ec2-54-237-170-112.compute-1.amazonaws.com >> ~/.ssh/known_hosts
 
       - name: Deploy to EC2
+        working-directory: ./backend
         env:
           DOCKER_TAG: ${{ needs.build-and-test.outputs.docker_tag }}
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
@@ -272,22 +273,27 @@ jobs:
           echo "🚀 Deploying to EC2 production..."
           echo "Using images with tag: ${DOCKER_TAG}"
           
+          # Update image tags in manifests
+          cd k3d-manifests
+          sed -i "s|image: ${DOCKER_USERNAME}/bugdrill-api:.*|image: ${DOCKER_USERNAME}/bugdrill-api:${DOCKER_TAG}|g" api.yaml
+          sed -i "s|image: ${DOCKER_USERNAME}/bugdrill-executor:.*|image: ${DOCKER_USERNAME}/bugdrill-executor:${DOCKER_TAG}|g" executor.yaml
+          sed -i "s|image: ${DOCKER_USERNAME}/bugdrill-tests:.*|image: ${DOCKER_USERNAME}/bugdrill-tests:${DOCKER_TAG}|g" tests.yaml
+          
+          # Copy manifests to EC2
+          scp -i ~/.ssh/bugdrill.pem -r ./*.yaml ubuntu@ec2-54-237-170-112.compute-1.amazonaws.com:/tmp/
+          
           ssh -i ~/.ssh/bugdrill.pem ubuntu@ec2-54-237-170-112.compute-1.amazonaws.com bash -s << EOF
-            # Update API deployment
-            kubectl set image deployment/bugdrill-api \
-              bugdrill-api=${DOCKER_USERNAME}/bugdrill-api:${DOCKER_TAG} \
-              -n bugdrill
-            
-            # Update Executor deployment
-            kubectl set image deployment/bugdrill-executor \
-              bugdrill-executor=${DOCKER_USERNAME}/bugdrill-executor:${DOCKER_TAG} \
-              -n bugdrill
+            # Apply manifests
+            echo "Deploying API and Executor..."
+            kubectl apply -f /tmp/api.yaml
+            kubectl apply -f /tmp/executor.yaml
             
             # Wait for rollout
             echo "Waiting for API rollout..."
             kubectl rollout status deployment/bugdrill-api -n bugdrill --timeout=300s
             
             echo "Waiting for Executor rollout..."
+            kubectl rollout status deployment/bugdrill-executor -n bugdrill --timeout=300s
             kubectl rollout status deployment/bugdrill-executor -n bugdrill --timeout=300s
             
             # Show status
