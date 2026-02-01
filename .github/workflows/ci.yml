@@ -272,7 +272,7 @@ jobs:
           echo "🚀 Deploying to EC2 production..."
           echo "Using images with tag: ${DOCKER_TAG}"
           
-          ssh -i ~/.ssh/bugdrill.pem ubuntu@ec2-54-237-170-112.compute-1.amazonaws.com << EOF
+          ssh -i ~/.ssh/bugdrill.pem ubuntu@ec2-54-237-170-112.compute-1.amazonaws.com bash -s << EOF
             # Update API deployment
             kubectl set image deployment/bugdrill-api \
               bugdrill-api=${DOCKER_USERNAME}/bugdrill-api:${DOCKER_TAG} \
@@ -293,8 +293,40 @@ jobs:
             # Show status
             echo ""
             echo "✅ Deployment complete!"
-            echo "Deployed version: ${DOCKER_TAG}"
             kubectl get pods -n bugdrill -l 'app in (bugdrill-api,bugdrill-executor)'
+            
+            # Run functional tests
+            echo ""
+            echo "🧪 Running functional tests on production..."
+            
+            # Delete old test job if exists
+            kubectl delete job bugdrill-tests -n bugdrill --ignore-not-found=true
+            
+            # Create test job with the deployed version
+            kubectl run bugdrill-tests --image=${DOCKER_USERNAME}/bugdrill-tests:${DOCKER_TAG} \
+              --restart=Never -n bugdrill \
+              --env="API_URL=http://bugdrill-api:8080" \
+              --env="EXECUTOR_URL=http://bugdrill-executor:8081"
+            
+            # Wait for tests to complete
+            echo "Waiting for tests to complete..."
+            kubectl wait --for=condition=complete job/bugdrill-tests -n bugdrill --timeout=300s || \
+            kubectl wait --for=condition=failed job/bugdrill-tests -n bugdrill --timeout=10s
+            
+            # Show test results
+            echo ""
+            echo "📊 Test Results:"
+            kubectl logs job/bugdrill-tests -n bugdrill --tail=50
+            
+            # Check test status
+            if kubectl get job bugdrill-tests -n bugdrill -o jsonpath='{.status.succeeded}' | grep -q 1; then
+              echo ""
+              echo "✅ Production tests PASSED!"
+            else
+              echo ""
+              echo "❌ Production tests FAILED!"
+              exit 1
+            fi
           EOF
 
       - name: Deployment summary
