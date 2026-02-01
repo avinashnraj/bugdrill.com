@@ -23,100 +23,93 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Start k3d runner container
-        working-directory: ./backend
+      - name: Install k3d and kubectl
         run: |
-          docker compose -f docker-compose.k3d.yml up -d
+          # Install k3d
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+          k3d version
           
-          # Wait for container to be running
-          echo "Waiting for container to start..."
-          sleep 5
-          
-          # Check if container is running
-          if ! docker ps | grep -q bugdrill-k3d-runner; then
-            echo "Container failed to start. Checking logs..."
-            docker logs bugdrill-k3d-runner || true
-            docker compose -f docker-compose.k3d.yml logs
-            exit 1
-          fi
-          
-          # Wait for Docker-in-Docker daemon to be ready
-          echo "Waiting for Docker daemon to initialize..."
-          max_attempts=30
-          attempt=0
-          
-          while [ $attempt -lt $max_attempts ]; do
-            if docker exec bugdrill-k3d-runner docker info >/dev/null 2>&1; then
-              echo "✓ Docker daemon is ready"
-              docker exec bugdrill-k3d-runner docker info
-              break
-            fi
-            
-            attempt=$((attempt + 1))
-            echo "Waiting for Docker daemon... ($attempt/$max_attempts)"
-            sleep 2
-          done
-          
-          if [ $attempt -eq $max_attempts ]; then
-            echo "✗ Docker daemon failed to start"
-            docker logs bugdrill-k3d-runner
-            exit 1
-          fi
+          # Install kubectl
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          kubectl version --client
 
       - name: Build AMD64 images
         working-directory: ./backend
         run: |
           echo "Building AMD64 images for k3d..."
-          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make docker-build-local"
+          make docker-build-local
 
       - name: Create k3d cluster
         working-directory: ./backend
         run: |
           echo "Creating k3d cluster..."
-          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-create"
+          make k3d-create
+          
+          # Wait for cluster to be ready
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
 
       - name: Deploy databases (parallel)
         working-directory: ./backend
         run: |
-          echo "Deploying PostgreSQL and Redis in parallel..."
-          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-deploy-postgres & make k3d-deploy-redis & wait"
+          echo "Deploying PostgreSQL and Redis..."
+          make k3d-deploy-postgres &
+          make k3d-deploy-redis &
+          wait
+          
+          # Wait for databases to be ready
+          kubectl wait --for=condition=Ready pod -l app=postgres -n bugdrill --timeout=120s
+          kubectl wait --for=condition=Ready pod -l app=redis -n bugdrill --timeout=120s
 
       - name: Initialize database
         working-directory: ./backend
         run: |
           echo "Running database migrations..."
-          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-init-db"
+          make k3d-init-db
+          
+          # Wait for migrations to complete
+          kubectl wait --for=condition=complete job/bugdrill-init-db -n bugdrill --timeout=120s
 
       - name: Deploy services (parallel)
         working-directory: ./backend
         run: |
-          echo "Deploying Executor and API in parallel..."
-          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-deploy-executor & make k3d-deploy-api & wait"
+          echo "Deploying Executor and API..."
+          make k3d-deploy-executor &
+          make k3d-deploy-api &
+          wait
+          
+          # Wait for services to be ready
+          kubectl wait --for=condition=Ready pod -l app=bugdrill-executor -n bugdrill --timeout=120s
+          kubectl wait --for=condition=Ready pod -l app=bugdrill-api -n bugdrill --timeout=120s
 
       - name: Run integration tests
         working-directory: ./backend
         run: |
           echo "Running integration tests..."
-          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-deploy-tests"
+          make k3d-deploy-tests
+          
+          # Wait for tests to complete
+          kubectl wait --for=condition=complete job/bugdrill-tests -n bugdrill --timeout=300s
 
       - name: Extract test results
         if: always()
         working-directory: ./backend
         run: |
-          docker exec bugdrill-k3d-runner bash -c "cd /workspace && kubectl logs -n bugdrill job/bugdrill-tests --tail=100" || true
+          kubectl logs -n bugdrill job/bugdrill-tests --tail=100 || true
 
       - name: Show cluster status on failure
         if: failure()
         working-directory: ./backend
         run: |
           echo "=== Cluster Status ==="
-          docker exec bugdrill-k3d-runner bash -c "cd /workspace && make k3d-status" || true
+          make k3d-status || true
 
       - name: Cleanup
         if: always()
         working-directory: ./backend
         run: |
-          docker compose -f docker-compose.k3d.yml down -v
+          k3d cluster delete bugdrill-local || true
 
   # Job 2: Build production ARM64 images
   build-production:
